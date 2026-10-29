@@ -1,34 +1,25 @@
-# Project Description
-This is an experiment for running a long horizon task with SLM.
+# Project Summary
+This is an experiment for running a long horizon task with small language model.
 
-# Environment and tool use
+- Use `uv`: `uv sync` and `uv run pytest`
+- Never commit secrets or local environment files.
 
-The working directory is `C:\Project\long-horizon-slm` on Windows. Pi's bash tool uses Git Bash, not Linux. Use paths relative to the working directory, such as `input/andrej.md`; in Git Bash the project is `/c/Project/long-horizon-slm`. Do not search `/`, other drives, or unrelated directories. The seed file can be read directly; do not search for it.
+# Python Conventions
 
-Use tools already available. Do not run `apt-get`, `apt-cache`, or other Linux package managers, and do not install software. If a command fails, inspect its output and do not repeat the same command unchanged. If you cannot access a required tool, source, or the internet, record the limitation and continue only with work that does not depend on it. If blocked, stop and report the blocker. Avoid piping commands through tools that can hide their failure status.
+- Use four-space indentation, `snake_case` for functions and modules, and `PascalCase` for classes.
+- Add type annotations to public interfaces.
+- All source codes will be placed under `src` folder, create subfolder where practical.
 
-# Python cli
-To run Python commands on Git Bash use `py` and `python` instead of `py3` and `python3`. For example:
+# Testing
 
-`py main.py`
-`py --version`
-`python src/main.py`
-`python utils/util.py`
+- Use pytest library to create the test
+- Place tests under `tests/`, mirroring the source package where practical.
 
-# Run output
+# Git and Reviews
 
-At the start of each new Pi session, before creating deliverables:
+Pull requests should:
 
-1. Read `.run-version` in the project root as an integer.
-2. Add 1 to that integer. Call the result the run number.
-3. Set the run directory to `output/run-version-<run number>`.
-4. If that directory already exists, stop and report the conflict.
-   Do not overwrite an existing run.
-5. Create the run directory, then replace the value in `.run-version`
-   with the new run number.
-6. Save every deliverable for this session inside that run directory.
-   Do not write deliverables directly into `output/`.
-
-If the counter cannot be read, is not an integer, or cannot be updated,
-stop and report the problem. Reuse the same run directory for the rest
-of this session; do not increment the counter for each file or message.
+- Explain the behavior change.
+- Link the relevant requirement or issue.
+- List the verification performed.
+- Include an API example or screenshot when observable behavior changes.
