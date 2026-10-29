@@ -1,0 +1,22 @@
+# Assignment: Build a sourced Andrej Karpathy profile
+
+Use `input/andrej.md` as the starting point to create a well-sourced, locally browsable profile of Andrej Karpathy. Complete the assignment autonomously in this directory. The existing note is a seed, not an authority: check its claims and preserve the original file unchanged. Internet access is needed for source verification. If it is unavailable, complete what you can and clearly mark remaining work as unverified; do not invent sources or facts.
+
+## Deliverables
+
+First create the run directory specified in AGENTS.md. Create every deliverable listed below inside that run directory, not directly in `output/`. Use the same run directory for the entire session:
+
+- `sources.md`: a numbered source ledger with title, URL, publisher or author, access date, and the specific claims each source supports. Prefer original material such as Karpathy's own pages, university pages, company announcements, and project repositories. Cite independent sources where needed. Do not treat repeated copies of the same claim as independent corroboration.
+- `claims-audit.md`: examine each factual claim in `input/andrej.md` separately. Record the original claim, its status (supported, partly supported, contradicted, or unverified), relevant source IDs, and any correction or qualification. Distinguish job titles, dates, and claims of being a founder or creator when evidence is narrower.
+- `timeline.json`: a machine-readable array of career, education, teaching, and project milestones. Each item must include `id`, `date` (ISO year, month, or day according to the evidence), `date_precision`, `title`, `description`, `category`, and a nonempty `sources` array containing IDs from the ledger. Use at least eight substantiated milestones spanning more than one period of his career; if the evidence cannot support eight, include only supported milestones and explain the gap in the report. Do not infer exact dates from year-only evidence. Sort chronologically; distinguish simultaneous or ongoing roles where applicable.
+- `index.html`, `style.css`, and `app.js`: a responsive, accessible static profile site that works by opening `index.html` directly in a modern browser, without a server, build step, external scripts, or runtime network access. Include a concise biography, a chronological timeline generated from the same milestone data, a category filter, an accessible search, and a source section with usable links. Show source references next to factual claims. Include a visible date stating when the research was checked. Never imply that the page is an official biography.
+- `report.md`: explain the approach, research date, key corrections to the seed, unresolved claims, source limitations, how to use the site, and the checks performed with their actual results. Clearly identify checks that could not be performed.
+
+## Requirements
+
+1. Research and audit the seed before composing the biography. Separate directly supported facts from interpretation and avoid assuming a source supports a detail it does not state.
+2. Build the timeline from the source ledger and derive the website's timeline from the same data. Since browser security can block fetching local JSON, make the site work from `file://`; document how the JSON and site data stay consistent. Avoid maintaining two independent factual timelines.
+3. Make the timeline filter and search usable by keyboard. Provide labels, semantic headings, visible focus, readable contrast, and a useful empty-result message. Support narrow and wide screens. External source links should identify their destinations.
+4. Use only assets you have the right to use; a text-first design is sufficient. Do not include personal contact information or unsupported personal details.
+5. Verify the JSON parses, all source IDs resolve, dates are ordered, all required deliverables exist, and the page works locally. If a browser is available, exercise the search, filter, empty state, keyboard navigation, and a narrow viewport. Report what you actually tested and any limitations; do not claim a browser check without performing it.
+6. Keep all work in this directory. Do not modify the original profile or delete unrelated files. The final response should link to the deliverables and summarize the main findings and verification gaps.
