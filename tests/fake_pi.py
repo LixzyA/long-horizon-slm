@@ -7,6 +7,7 @@ import time
 mode = sys.argv[1]
 print(json.dumps({"type": "test_cwd", "cwd": os.getcwd()}), flush=True)
 if mode == "exit":
+    print("launcher: test startup failure", file=sys.stderr, flush=True)
     raise SystemExit(2)
 if mode == "hang":
     child = subprocess.Popen(
@@ -45,9 +46,66 @@ for line in sys.stdin:
         )
         if mode == "crash":
             raise SystemExit(3)
+        if mode in ("complete", "loop", "loop_hang"):
+            print(
+                json.dumps(
+                    {
+                        "type": "message_update",
+                        "assistantMessageEvent": {
+                            "type": "toolcall_delta",
+                            "delta": "partial",
+                        },
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "type": "tool_execution_update",
+                        "partialResult": {"text": "partial"},
+                    }
+                ),
+                flush=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "type": "message_end",
+                        "message": {"role": "assistant", "content": "complete"},
+                    }
+                ),
+                flush=True,
+            )
+        if mode in ("loop", "loop_hang"):
+            for i in range(10):
+                call_id = str(i)
+                print(
+                    json.dumps(
+                        {
+                            "type": "tool_execution_start",
+                            "toolCallId": call_id,
+                            "toolName": "bash",
+                            "args": {"command": "bad"},
+                        }
+                    ),
+                    flush=True,
+                )
+                print(
+                    json.dumps(
+                        {
+                            "type": "tool_execution_end",
+                            "toolCallId": call_id,
+                            "toolName": "bash",
+                            "isError": True,
+                            "result": {"text": "failure"},
+                        }
+                    ),
+                    flush=True,
+                )
         if mode == "complete":
             print(json.dumps({"type": "agent_settled"}), flush=True)
-    elif request["type"] == "abort" and mode == "abort":
+    elif request["type"] == "abort" and mode in ("abort", "loop"):
         print(
             json.dumps(
                 {
@@ -60,5 +118,5 @@ for line in sys.stdin:
             flush=True,
         )
         break
-    elif request["type"] == "abort" and mode == "hang":
+    elif request["type"] == "abort" and mode in ("hang", "loop_hang"):
         time.sleep(60)

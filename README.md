@@ -3,17 +3,21 @@ This is a project for researching long horizon tasks on small language models. T
 
 # Supervised Pi run
 
-The supervisor starts one Pi task on Windows. It sends the prompt in RPC mode and stops the run at the time limit. It uses `experiment_workspace/` as Pi's working directory. Pi reads the task from `experiment_workspace/task.prompt`.
+The Windows supervisor runs one Pi task inside a Docker container. It copies `experiment_workspace/` into a new run directory and mounts only that copy at `/workspace`. The supervisor reads `task.prompt` from that copy and sends its contents directly to Pi; it also enforces the time limit and detects repeated failed calls. An absent, empty, or unreadable `task.prompt` stops preparation before Pi starts. The original workspace is not modified by the agent.
 
 ## Prerequisites
 
-1. Start Unsloth Studio and load the intended model.
-2. Make sure that `unsloth` and `pi` are available on `PATH`.
-3. From the project directory, install the project environment:
+1. Start Docker Desktop with Linux containers.
+2. Start Ollama and make sure the local `qwen-custom` model is installed and supports tools and thinking. Configure Ollama to allocate at least 128,000 tokens of context. Check `ollama show qwen-custom --parameters` for its saved sampling settings.
+3. Install Pi 1.4.0 at its normal user location.
+4. From the project directory, prepare the environment and build the image:
 
    ```powershell
    uv sync
+   uv run python src/build_image.py
    ```
+
+The image build copies the installed Pi 1.4.0 packages into a temporary build directory and uses pinned Node and Python base images. It does not mount the Pi installation into the running container. Rebuild after changing the Docker files or Pi installation.
 
 ## Command-line options
 
@@ -26,6 +30,7 @@ uv run src/supervisor.py
 | Option | Description |
 | --- | --- |
 | `--limit-seconds SECONDS` | Set the maximum task time in seconds. The value must be a positive, finite number. The default is `2700`. |
+| `--thinking MODE` | Set the Pi model mode to `high` or `off`. The default is `high`. |
 | `-h`, `--help` | Show the command-line help and exit. No task starts. |
 
 For example, set a 60-second task limit:
@@ -34,29 +39,36 @@ For example, set a 60-second task limit:
 uv run src/supervisor.py --limit-seconds 60
 ```
 
-The task timer starts when the supervisor submits the prompt to Pi. The timer does not include the Pi startup period. The supervisor allows up to 60 seconds for the startup readiness response. After a timeout, it allows up to five seconds for Pi to acknowledge the abort. Shutdown and cleanup can add time after the task deadline.
+The task timer starts when the supervisor submits the prompt to Pi. The timer does not include model loading, network verification, or the Pi startup period. The supervisor allows up to 60 seconds for the startup readiness response. After a timeout, it allows up to five seconds for Pi to acknowledge the abort. Shutdown and cleanup can add time after the task deadline.
 
 ## Internal option: `--job-bootstrap`
 
-Do not pass `--job-bootstrap` in a normal command. The supervisor passes it to a child copy of itself, together with a Windows Job Object handle and the agent command. The child joins the Job Object before it starts Unsloth and Pi. This lets the supervisor stop the processes in that job if an abort does not complete. The handle is an internal value for that launch. It is not a user parameter.
+Do not pass `--job-bootstrap` in a normal command. The supervisor passes it to a child copy of itself, together with a Windows Job Object handle and the agent command. The child joins the Job Object before it starts the Docker client. This lets the supervisor stop the processes in that job if an abort does not complete. The handle is an internal value for that launch. It is not a user parameter.
 
-A Windows Job Object groups the owned processes. It is not a filesystem or network sandbox. The supervisor does not intentionally stop an Unsloth Studio server that is already active.
+The Job Object controls the Windows client processes. The supervisor also removes the named Docker container on normal completion, interruption, or timeout. If the supervisor or Docker crashes, check Docker for a remaining `long-horizon-` container. Ollama remains outside the container. The gateway is stopped and the dedicated network removed during cleanup.
 
 ## Agent launch settings
 
-The supervisor supplies these settings to Unsloth and Pi. They are not options of `supervisor.py`:
+The supervisor supplies these settings to Pi. They are not command-line options of `supervisor.py`:
 
 | Setting | Current value | Purpose |
 | --- | --- | --- |
-| `--model` | `unsloth/Qwen3.5-0.8B-GGUF` | Select the model. |
-| `--context-length` | `128000` | Request the model context length through Unsloth. |
-| `--persist` | Enabled | Keep Unsloth-managed Pi session data. |
-| `--no-serve` | Enabled | Require an existing Unsloth server. Do not start a server automatically. |
-| `--mode` | `rpc` | Use Pi's RPC interface for the prompt and abort commands. |
-| `--session-dir` | A `pi-sessions` folder inside the supervisor record directory | Store Pi session files for this run. |
-| `--repeat-penalty`| 1.15 | To avoid the agent having a loop |
+| Model | `qwen-custom` | Use the locally installed Ollama model. |
+| Pi context window | `128000` | Require Ollama to allocate at least this much context; Pi uses 128,000. |
+| Thinking | `high` by default | Use `--thinking off` to disable thinking. The gateway sends the selected mode to Ollama. |
+| Sampling | `qwen-custom` settings | Preserve the model's saved sampling parameters; the gateway rejects request-level overrides. |
+| Pi mode | `rpc` | Send the prompt and abort through Pi's RPC interface. |
+| Pi session directory | `workspace/.pi-sessions/` within the run record | Retain Pi session files for this run. |
 
-Change the model, context length, or prompt in `src/supervisor.py`. The supervisor does not provide command-line options for these settings.
+Edit `experiment_workspace/task.prompt` to change the assignment. The model name and minimum context are part of the gateway configuration as well as the supervisor; do not change one without updating the other. The supervisor does not provide command-line options for these settings.
+
+The container has a read-only root filesystem, a writable temporary directory, and one writable host bind mount: the per-run workspace copy. Linux system files remain visible inside the container. It runs as a non-root user with capabilities dropped. The original Windows paths in the copied `AGENTS.md` are replaced with Linux instructions; its run-output rules remain. Links and Windows junctions in the source workspace are rejected before copying.
+
+The copy retains its own `.run-version` and output folders. Changes to the copy, including its counter, are not merged back into the original workspace, so separate runs can have the same version number inside their different record directories.
+
+Pi runs on a dedicated Docker internal network in isolated gateway mode. Before the task starts, the supervisor verifies that the agent cannot reach Ollama or the public internet directly, that the gateway rejects Ollama management requests, and that private web destinations are blocked. A separate gateway container can access Ollama, but only forwards authenticated chat-completion requests for `qwen-custom` with the selected thinking mode and no sampling overrides. It checks the loaded model digest and allocated context before each inference request. If the isolation check fails, the run stops before Pi receives the task.
+
+Public HTTP and HTTPS research goes through the gateway on ports 80 and 443. The gateway resolves public domains using certificate-verified DNS over HTTPS at Cloudflare (`1.1.1.1`), rejects non-public addresses, and connects to the validated address. The domain names looked up for research are sent to that DNS service. Programs must honor `HTTP_PROXY` or `HTTPS_PROXY`; tools that ignore them cannot reach the internet directly. Public web access depends on network availability.
 
 The Python function `supervise()` has these parameters. They are not command-line options:
 
@@ -71,19 +83,20 @@ The Python function `supervise()` has these parameters. They are not command-lin
 
 ## Records and outcomes
 
-The supervisor prints the record directory at startup. Each directory under `supervisor-runs/` contains `events.jsonl` and `outcome.json`. Pi session files use the `pi-sessions/` subdirectory when Pi creates them. `events.jsonl` contains JSON records received from Pi. Non-JSON launcher output is not retained there.
+The supervisor prints the record directory at startup. Each started run under `supervisor-runs/` contains `events.jsonl`, `outcome.json`, `model.json`, and the copied `workspace/`. `model.json` records the model digest, saved parameters, and verified allocated context at startup. Pi session files use `workspace/.pi-sessions/`. A preparation failure can leave a workspace copy without event or outcome records. `events.jsonl` contains Pi lifecycle events and completed messages, tool calls, and tool results. It excludes `message_update` and `tool_execution_update` streaming fragments. A response interrupted mid-stream may have no complete message in this log. The supervisor prints non-JSON launcher output to the terminal, but does not retain it in `events.jsonl`. Terminal output can contain private information.
 
 `outcome.json` records the limit, timestamps, elapsed task time when available, status, termination method, and launcher exit code. The status can be:
 
 - `settled`: Pi stopped its run. This status does not prove task success.
 - `timeout`: the task deadline expired. The termination value identifies a graceful abort acknowledgement or forced termination.
+- `loop_detected`: ten consecutive calls to the same tool with identical arguments failed. `loop_detection` records the tool name, triggering call ID, and failure count. The supervisor requests an abort and uses forced termination if needed.
 - `startup_error`: the supervisor did not submit the prompt.
 - `run_error`: the run ended unexpectedly after prompt submission.
 - `interrupted`: the user interrupted the supervisor with Ctrl+C.
 
-The supervisor returns exit code `0` for `settled` and `1` for the other recorded outcomes. Forced termination can leave partial output files. The records can contain prompts, tool results, and other session content. Keep them private and do not commit secrets.
+The supervisor returns exit code `0` for `settled` when container cleanup succeeds, and `1` otherwise. If Docker reports that cleanup failed, the outcome includes `container_cleanup: failed`; check Docker for remaining `long-horizon-` containers or networks. Forced termination can leave partial output files. The records can contain prompts, tool results, and other session content. Keep them private and do not commit secrets.
 
-The supervisor does not detect repeated tool calls. It does not enforce the agent's output directory. It is non-interactive. To steer or resume a session, use Pi separately after the supervisor exits.
+The loop detector counts only tool results that Pi marks as errors. A successful call or a different tool call resets the count. The supervisor does not enforce the agent's output directory within the copy. It is non-interactive. To steer or resume a session, use Pi separately after the supervisor exits.
 
 ## Tests
 

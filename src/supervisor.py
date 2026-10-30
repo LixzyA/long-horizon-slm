@@ -9,21 +9,112 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from ctypes import wintypes
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import container_run
+import network_guard
+import ollama_model
+
 ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = ROOT / "experiment_workspace"
-MODEL = "unsloth/Qwen3.5-0.8B-GGUF"
+MODEL = "qwen-custom"
 CONTEXT_LENGTH = 128_000
-REPEAT_PENALTY = 1.15
-PROMPT = "Read task.prompt and complete the assignment described there. Use the current directory as your working directory."
+PROMPT = "Complete the assignment below. Use the current directory as your working directory.\n\n"
 
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+class LoopDetector:
+    """Count consecutive failed tool calls in start order."""
+
+    def __init__(self) -> None:
+        self.pending: deque[dict[str, Any]] = deque()
+        self.by_id: dict[str, dict[str, Any]] = {}
+        self.last_signature: tuple[str, str] | None = None
+        self.failures = 0
+        self.detection: dict[str, Any] | None = None
+
+    def observe(self, event: dict[str, Any]) -> bool:
+        event_type = event.get("type")
+        if event_type == "tool_execution_start":
+            call_id = event.get("toolCallId")
+            name = event.get("toolName")
+            args = event.get("args")
+            if (
+                not isinstance(call_id, str)
+                or not isinstance(name, str)
+                or not isinstance(args, dict)
+                or call_id in self.by_id
+            ):
+                self.pending.clear()
+                self.by_id.clear()
+                self.last_signature = None
+                self.failures = 0
+                return False
+            call = {
+                "id": call_id,
+                "name": name,
+                "signature": (
+                    name,
+                    json.dumps(args, sort_keys=True, ensure_ascii=False),
+                ),
+                "failed": None,
+            }
+            self.pending.append(call)
+            self.by_id[call_id] = call
+        elif event_type == "tool_execution_end":
+            call = self.by_id.get(event.get("toolCallId"))
+            if call is None or call["failed"] is not None:
+                self.pending.clear()
+                self.by_id.clear()
+                self.last_signature = None
+                self.failures = 0
+                return False
+            call["failed"] = event.get("isError") is True
+            while self.pending and self.pending[0]["failed"] is not None:
+                finished = self.pending.popleft()
+                del self.by_id[finished["id"]]
+                if not finished["failed"]:
+                    self.last_signature = None
+                    self.failures = 0
+                elif finished["signature"] == self.last_signature:
+                    self.failures += 1
+                else:
+                    self.last_signature = finished["signature"]
+                    self.failures = 1
+                if self.failures == 10:
+                    self.detection = {
+                        "tool_name": finished["name"],
+                        "tool_call_id": finished["id"],
+                        "failure_count": self.failures,
+                    }
+                    return True
+            # Later completed calls can form a streak even if an earlier call is still running.
+            signature = None
+            failures = 0
+            for finished in self.pending:
+                if finished["failed"] is not True:
+                    signature = None
+                    failures = 0
+                elif finished["signature"] == signature:
+                    failures += 1
+                else:
+                    signature = finished["signature"]
+                    failures = 1
+                if failures == 10:
+                    self.detection = {
+                        "tool_name": finished["name"],
+                        "tool_call_id": finished["id"],
+                        "failure_count": failures,
+                    }
+                    return True
+        return False
 
 
 class BasicLimits(ctypes.Structure):
@@ -192,8 +283,18 @@ def supervise(
                     try:
                         record = json.loads(line)
                     except (ValueError, UnicodeDecodeError):
+                        print(
+                            line.decode("utf-8", errors="replace"),
+                            end="",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                         continue
-                    events.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    if record.get("type") not in (
+                        "message_update",
+                        "tool_execution_update",
+                    ):
+                        events.write(json.dumps(record, ensure_ascii=False) + "\n")
                     return record
 
             startup_deadline = time.monotonic() + startup_seconds
@@ -215,6 +316,7 @@ def supervise(
             result["prompt_submitted_at_utc"] = utc_now()
             start = time.monotonic()
             deadline = start + limit_seconds
+            detector = LoopDetector()
             while True:
                 event = receive(deadline)
                 if event is None:
@@ -226,12 +328,16 @@ def supervise(
                     and not event.get("success")
                 ):
                     raise RuntimeError("Pi rejected the prompt.")
+                if detector.observe(event):
+                    result["status"] = "loop_detected"
+                    result["loop_detection"] = detector.detection
+                    break
                 if event.get("type") == "agent_settled":
                     result["status"] = "settled"
                     result["termination"] = "normal"
                     break
             result["elapsed_seconds"] = round(time.monotonic() - start, 3)
-            if result["status"] == "timeout":
+            if result["status"] in ("timeout", "loop_detected"):
                 send({"id": "supervisor-abort", "type": "abort"})
                 stop_deadline = time.monotonic() + grace_seconds
                 result["termination"] = "forced"
@@ -286,6 +392,7 @@ def main() -> int:
         description="Run one Pi task with an external wall-clock limit."
     )
     parser.add_argument("--limit-seconds", type=float, default=2700)
+    parser.add_argument("--thinking", choices=("high", "off"), default="high")
     args = parser.parse_args()
     if not math.isfinite(args.limit_seconds) or args.limit_seconds <= 0:
         parser.error("--limit-seconds must be a positive finite number")
@@ -295,36 +402,58 @@ def main() -> int:
         / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     )
     run_dir.mkdir(parents=True, exist_ok=False)
-    command = [
-        "unsloth",
-        "start",
-        "pi",
-        "--persist",
-        "--no-serve",
-        "--model",
-        MODEL,
-        "--context-length",
-        str(CONTEXT_LENGTH),
-        "--repeat-penalty",
-        str(REPEAT_PENALTY),
-        "--mode",
-        "rpc",
-        "--session-dir",
-        str(run_dir / "pi-sessions"),
-    ]
     print(f"Run records: {run_dir}", flush=True)
+    name = "long-horizon-" + uuid.uuid4().hex
+    try:
+        workspace = container_run.prepare_workspace(WORKSPACE, run_dir)
+        assignment = (workspace / "task.prompt").read_text(encoding="utf-8")
+        if not assignment.strip():
+            raise ValueError("task.prompt is empty.")
+        model_info = ollama_model.prepare_model(MODEL, CONTEXT_LENGTH)
+        model_info["thinking"] = args.thinking == "high"
+        model_info["thinking_level"] = args.thinking
+        (run_dir / "model.json").write_text(
+            json.dumps(model_info, indent=2) + "\n", encoding="utf-8"
+        )
+        token = container_run.new_token()
+        guard = network_guard.GatewaySession(
+            name, token, model_info["model_digest"], args.thinking
+        )
+        guard.start()
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as exc:
+        print(f"Could not prepare isolated run: {exc}", file=sys.stderr)
+        return 1
+    command = container_run.container_command(
+        workspace, name, guard.network, token, args.thinking
+    )
     print(
-        f"Waiting for Pi; time limit after prompt submission: {args.limit_seconds:g} seconds.",
+        f"Waiting for Pi in Docker; time limit after prompt submission: {args.limit_seconds:g} seconds.",
         flush=True,
     )
-    result = supervise(command, PROMPT, args.limit_seconds, run_dir)
+    try:
+        result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir)
+    finally:
+        agent_cleanup_ok = container_run.cleanup_container(name)
+        gateway_cleanup_ok = guard.close()
+    cleanup_ok = agent_cleanup_ok and gateway_cleanup_ok
+    if not cleanup_ok:
+        result["container_cleanup"] = "failed"
+        (run_dir / "outcome.json").write_text(
+            json.dumps(result, indent=2) + "\n", encoding="utf-8"
+        )
     print(json.dumps(result, indent=2), flush=True)
     if result["status"] == "startup_error":
         print(
-            "Pi did not start. Check that Unsloth Studio is running with a model loaded and pi is on PATH.",
+            "Pi did not start. Check Docker Desktop and the container image.",
             file=sys.stderr,
         )
-    return 0 if result["status"] == "settled" else 1
+    return 0 if result["status"] == "settled" and cleanup_ok else 1
 
 
 if __name__ == "__main__":
