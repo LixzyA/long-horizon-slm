@@ -1,44 +1,85 @@
 # Experiment results: version 0
 
-Reviewed 29 October 2026. The version label refers to the retained folder `output/run-version-0`, not a proven single Pi session. Times are Asia/Shanghai (UTC+8). This is an exploratory artifact and trace review, not a controlled evaluation.
+This report records a review from 29 October 2026. Times use Asia/Shanghai (UTC+8).
+The version label refers to the folder `output/run-version-0`.
+The evidence does not link that folder to one Pi session.
+This was an exploratory review, not a controlled evaluation.
 
 ## Outcome
 
-**Incomplete, with substantive defects.** The folder has seven files: `sources.md`, `claims-audit.md`, `timeline.json`, `index.html`, `style.css`, `app.js`, and `README.md`. The requested `report.md` is absent. The README marks several requirements complete, but the saved artifacts do not substantiate those claims.
+**Incomplete, with defects.** At the time of review, the folder contained seven files.
+They were `sources.md`, `claims-audit.md`, `timeline.json`, `index.html`, `style.css`, `app.js`, and `README.md`.
+The requested `report.md` was absent. The README marked several requirements as complete.
+The saved files did not support those completion claims.
+Those version 0 files are not in the current workspace.
 
-## Provenance: two sessions in one folder
+## File provenance
 
-Exact SHA-256 matches between the current artifacts and contents of recorded Pi write calls show:
+SHA-256 matches linked the contents of saved files to Pi write calls:
 
-- `timeline.json`, `index.html`, `style.css`, `app.js`, and `README.md` match writes from session `01a1861c-b3d1-72f5-9ab3-1d1ed67c7953` between 13:30:30 and 13:31:37. That session started at 13:23:10; the task prompt was submitted at 13:23:36.
-- `sources.md` and `claims-audit.md` match writes from a later session, `01a1862c-1ff1-7228-b804-20822d33e270`, at 13:40:33 and 13:40:49. Its prompt was submitted at 13:40:18.
-- Both sessions wrote to `output/` in their traces, not to `output/run-version-0/`. The mechanism and time at which the files were placed into the versioned folder are not established by these traces. Consequently the folder should not be analyzed as the untouched output of a single run.
+- `timeline.json`, `index.html`, `style.css`, `app.js`, and `README.md` matched session `01a1861c-b3d1-72f5-9ab3-1d1ed67c7953`.
+  Those calls occurred between 13:30:30 and 13:31:37. The session started at 13:23:10.
+  The user submitted the prompt at 13:23:36.
 
-Both traces name `unsloth/Qwen3.5-0.8B-GGUF`. Earlier local inspection of the 13:23 session's runtime recorded a 128,000-token model context; actual run settings for every session and model performance characteristics were not independently established for this report.
+- `sources.md` and `claims-audit.md` matched the later session `01a1862c-1ff1-7228-b804-20822d33e270`.
+  The calls occurred at 13:40:33 and 13:40:49. The user submitted the prompt at 13:40:18.
 
-## Agent behavior
+- Both traces show writes to `output/`, not to `output/run-version-0/`.
+  The traces do not show when or how the files entered the versioned folder.
+  The folder is therefore not evidence of the untouched output of one session.
 
-In the 13:23 session, a response hit a 32,000-token output limit at 13:27:23 while generating a `write` call; Pi reported that the truncated call was not executed. Later, the agent ran the same `python3` JSON validation pipeline 40 times. Its output reported that Python was not found. The user then instructed it to use `py`; the final recorded assistant event at 13:34:12 reports `This operation was aborted`. There are no compaction entries in this session's retained trace.
+Both traces name `unsloth/Qwen3.5-0.8B-GGUF`.
+An earlier local inspection recorded a 128,000-token context for the 13:23 session.
+The original review did not establish the settings for every session or model performance.
 
-In the 13:40 session, the agent read the task and seed, then wrote the source ledger and audit. The final retained entry is the audit write result at 13:40:49, without a final response. Its reason for stopping is unverified.
+## Agent actions
+
+At 13:27:23, a response in the 13:23 session hit a 32,000-token output limit.
+The model attempted a `write` call. Pi reported that it did not execute the truncated call.
+The agent later ran the same `python3` JSON validation pipeline 40 times.
+The output reported that Python was not found.
+
+The user then instructed the agent to use `py`.
+At 13:34:12, the final recorded assistant event reported `This operation was aborted`.
+The retained trace has no compaction entries for this session.
+
+In the 13:40 session, the agent read the task and seed. It then wrote the source ledger and audit.
+The last retained entry was the audit write result at 13:40:49. There was no final response.
+The reason that the session stopped is unknown.
 
 ## Artifact checks
 
-- `timeline.json` parses as JSON and contains 12 entries, but is not chronologically sorted: its first date is `2015-09-06`, followed by `2005-11-09`. Entries use full dates while labeling precision as `ISO year`; their exact dates and factual support were not independently verified.
-- `index.html` has a manually written timeline rather than one generated from the JSON. For example, it displays the BSc milestone with a 2015 date while the JSON gives that milestone a 2005 date. This breaks the requested single-data-source consistency.
-- `app.js` selects `#searchForm`, but the HTML form has no `id="searchForm"`; the subsequent `addEventListener` therefore cannot attach to that element. The handler itself is a placeholder that logs the query. These are source-inspection findings; no browser test was performed.
-- `sources.md` repeats the same sources as alternatives and describes `https://karpathy.ai/` as an official OpenAI website. The ledger's source claims and access dates cannot be accepted as independently verified from the retained evidence. The later claims audit also relies on the seed to support claims that were supposed to be checked.
-- The site and README report a research date of 15 January 2024, and the audit reports a 2024 date. The observed Pi runs occurred in 2026; the source record does not establish that those dates are actual access dates.
-- The requested category filter, meaningful search, report, end-to-end browser checks, and source verification were not established. No live source checks or comprehensive accessibility or website tests were performed for this report.
+- `timeline.json` parsed as JSON and contained 12 entries. The dates were not in chronological order.
+  Its first date was `2015-09-06` and its second date was `2005-11-09`.
+  Entries used full dates with the precision label `ISO year`. Their exact dates and factual support were not independently checked.
 
-## Evidence and artifact fingerprints
+- `index.html` contained a manual timeline, not one made from the JSON.
+  It showed the BSc milestone with a 2015 date. The JSON gave that milestone a 2005 date.
+  Thus, the two files did not use one consistent source of timeline data.
+
+- `app.js` selected `#searchForm`. The HTML form had no `id="searchForm"`.
+  The subsequent `addEventListener` call failed because the selected element was absent.
+  The handler only logged the query. These findings came from source inspection, not a browser test.
+
+- `sources.md` repeated the same sources as alternatives. It called `https://karpathy.ai/` an official OpenAI website.
+  The retained evidence did not independently confirm the source claims or access dates.
+  The later claims audit also used the seed to support claims that needed independent checks.
+
+- The site and README gave a research date of 15 January 2024. The audit also gave a 2024 date.
+  The Pi sessions occurred in 2026. The evidence does not establish that those dates were actual access dates.
+
+- The review did not establish a usable category filter, meaningful search, or a report.
+  It did not establish complete browser checks or source verification.
+  No live source checks or complete accessibility and website tests occurred for the report.
+
+## Evidence and file fingerprints
 
 Pi traces:
 
 - `C:/Users/felix/.unsloth/studio/auth/agents/.tmp/unsloth-pi-wdzfi3kq/.pi/agent/sessions/--C--Project-long-horizon-slm--/2026-10-29T05-23-10-425Z_01a1861c-b3d1-72f5-9ab3-1d1ed67c7953.jsonl`
 - `C:/Users/felix/.unsloth/studio/auth/agents/.tmp/unsloth-pi-lhi7eh6_/.pi/agent/sessions/--C--Project-long-horizon-slm--/2026-10-29T05-40-01-144Z_01a1862c-1ff1-7228-b804-20822d33e270.jsonl`
 
-Current `output/run-version-0` files, SHA-256:
+The SHA-256 values below describe the files at the time of the original review.
 
 | File | SHA-256 |
 | --- | --- |
@@ -50,4 +91,5 @@ Current `output/run-version-0` files, SHA-256:
 | style.css | `cb93db2dfe410958fdeb08a93cc4926966e1895ce060899fd94c1291a20ad005` |
 | timeline.json | `c7502e318e0245ac94e0a0c366e89ebd3e7ccd0c130006ef7b1f6d9a9681251d` |
 
-Trace files are under Unsloth's temporary directory and may be cleaned up. A hash establishes content identity, not that the agent's claims or checks were correct.
+Unsloth can remove the temporary traces. A hash shows content identity.
+A hash does not establish that the agent's claims or checks were correct.

@@ -1,20 +1,45 @@
 # Long-horizon SLM experiments: master summary
 
-Updated 29 October 2026. This index records the two output versions identified by the user. Times are Asia/Shanghai (UTC+8). These are exploratory observations; the sessions were not a controlled comparison and differed in instructions, intervention, and artifact provenance.
+Updated 30 October 2026. Times use Asia/Shanghai (UTC+8).
+These runs are exploratory. They used different instructions, environments, and interventions.
+The evidence does not establish a controlled comparison or a performance order.
 
-| Version | Retained output | Status | Main observations | Detailed record |
-| --- | --- | --- | --- | --- |
-| 0 | `output/run-version-0/` | Incomplete; files match two different sessions | One session hit an output limit and repeated a failing Python check. The saved timeline is unsorted, the search is a placeholder, the report is absent, and source claims are not established. | [Version 0 results](experiment-results-version-0.md) |
-| 1 | `output/run-version-1/` | Interrupted; repeated-write loop | The 13:48 session wrote directly to `output/` despite receiving a run-folder instruction; it repeated writes to each of two files 437 times, and 16 compaction entries were recorded before the aborted final event. | [Version 1 results](experiment-results-version-1.md) |
+## Output versions
 
-## Scope and earlier sessions
+| Version | Status at the original review | Primary findings | Report |
+| --- | --- | --- | --- |
+| 0 | Incomplete | Files matched two sessions. The timeline had ordering and consistency defects. The report was absent. | [Version 0 results](experiment-results-version-0.md) |
+| 1 | Interrupted | The agent wrote to `output/`, not the requested run folder. It repeated two writes 437 times each. | [Version 1 results](experiment-results-version-1.md) |
 
-The [version 1 report](experiment-results-version-1.md) covers the 13:48 session. Its retained files match that session's writes, which targeted `output/`; the trace does not show how they were placed in the versioned folder. The 13:23 and 13:40 sessions contributed files to version 0 and are documented in its report. The 11:48 and 11:54 sessions are preserved separately in [earlier exploratory sessions](early-exploratory-sessions.md); their association with either output version is unverified.
+The reports describe files present at the time of their original reviews.
+The version 0 and version 1 output folders were absent from the workspace at the latest review.
 
-## Shared observations
+## Supervised Ollama run
 
-- The traces document repeated tool use after errors or without progress. A successful write does not demonstrate a correct artifact.
-- The prompt and environment changed over time, and the run-folder instructions conflicted with the task prompt during the version 1 session. These results do not identify a single cause or establish a performance ranking.
-- Compaction in version 1 did not stop its write loop. The evidence does not establish that compaction caused the loop.
-- Neither version has an independently established successful end-to-end outcome. The version 0 report is a bounded artifact inspection, not a complete source or browser audit; the version 1 record does not include a full artifact verification.
-- Temporary Pi traces may be removed by Unsloth. Preserve copies, prompts, configuration, and before/after artifacts before future evaluations if reproducibility matters.
+| Run | Outcome | Primary findings | Report |
+| --- | --- | --- | --- |
+| `20261030-100753-8ce2c174` | Incomplete | The agent read the seed but created no deliverables. Its last response hit the 16,384-token output limit. | [30 October run](experiment-results-20261030-100753.md) |
+| `20261030-103850-af74bd43` | Incomplete | With `off` for thinking, the agent read the seed but made no deliverables. It left an empty file named `output`. | [Thinking-off run](experiment-results-20261030-103850.md) |
+
+The supervisor recorded `settled`. That status does not establish task success.
+The deadline and identical-call loop detector did not stop either run.
+
+## Earlier sessions and evidence limits
+
+The [version 1 report](experiment-results-version-1.md) covers the 13:48 session.
+The retained files matched its writes, but the trace shows writes to `output/`.
+The trace does not show how the files entered the versioned folder.
+
+The 13:23 and 13:40 sessions contributed files to version 0. Its report records both sessions.
+The [earlier exploratory sessions](early-exploratory-sessions.md) cover the 11:48 and 11:54 sessions.
+The evidence does not link those earlier sessions to either output version.
+
+The traces show repeated tool calls after errors or without progress.
+A successful write does not establish that a file is correct.
+The version 1 instructions did not fully agree. The evidence does not establish one cause for the loop.
+Compaction occurred during the version 1 loop. The evidence does not show that compaction caused it.
+
+No version has a confirmed successful end-to-end outcome.
+The version 0 review did not include a complete source or browser audit.
+The version 1 review did not include a full check of the artifacts.
+Unsloth can remove temporary Pi traces. Keep copies of traces, prompts, settings, and artifacts for later analysis.
