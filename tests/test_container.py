@@ -82,6 +82,6 @@ def test_sokoban_workspace_copies_task_and_instructions(tmp_path: Path) -> None:
     assert "Sokoban" in (workspace / "task.prompt").read_text(encoding="utf-8")
     instructions = (workspace / "AGENTS.md").read_text(encoding="utf-8")
     assert "/workspace" in instructions
-    assert "run-version" in instructions
+    assert "output/" in instructions
+    assert "output/game.json" in (workspace / "task.prompt").read_text(encoding="utf-8")
     assert (workspace / "src" / "sokoban.py").is_file()
-    assert int((workspace / ".run-version").read_text(encoding="utf-8")) == 0

@@ -1,11 +1,12 @@
-# Specification: Sokoban action limit
+# Specification: Sokoban action limit and board display
 
-Status: Draft for review  
+Status: Implemented
+
 Scope: The existing one-box Sokoban pilot
 
 ## Objective
 
-Bound play in a Sokoban run and make exploration and recovery measurable. The agent must see the remaining budget and know whether it solved the puzzle or ran out of actions. Preserve the existing profile task and supervisor behavior.
+Bound play in a Sokoban run, make the board easier to interpret, and make exploration and recovery measurable. The agent must see the current board and coordinates, the remaining budget, and whether it solved the puzzle or ran out of actions. Preserve the existing profile task and supervisor behavior.
 
 ## Assumptions
 
@@ -27,6 +28,34 @@ Bound play in a Sokoban run and make exploration and recovery measurable. The ag
 6. Both solved and action_limit_reached are terminal. Further direction and undo commands report the terminal outcome and leave the board, histories, and counts unchanged. Show remains available and does not change the state.
 7. Init must keep its current no-overwrite behavior. The task instructions tell the agent not to create a second state file, restart the game, edit the state directly, or change the game program to bypass the limit.
 
+## Board representation
+
+- On init, show, and every action, display the current board as a grid with a column-number header, a row number beside each row, and exactly one space between cell symbols. Display empty floor as `-` rather than an invisible space.
+- Keep the other Sokoban symbols: `#` for a wall, `.` for an empty goal, `@` for the player, `$` for the box, `+` for the player on the goal, and `*` for the box on the goal. The goal and wall layout must come from the game board, not a separate hand-maintained description.
+- After the grid, show the current player, box, and goal positions with explicit `row` and `column` labels. Use zero-based indices: row 0 is the top row, column 0 is the leftmost column, up decreases row, and right increases column. The existing game stores positions as `(x, y)`; display column from `x` and row from `y` without changing the saved coordinate convention.
+- The grid, the coordinates, and the actual game state must agree, including when the player or box is on the goal. The coordinates for the goal remain visible when `+` or `*` occupies it. Do not add a separately maintained wall-coordinate list.
+- Show the same information after successful, blocked, and undo actions, as well as when an action is rejected because the game is terminal. It must reflect the resulting board rather than the attempted move.
+- Update the task prompt to explain the symbols, the row and column indexing, movement directions, and that each `#` cell is a wall. It should direct the agent to the displayed board for the current wall locations and explain that walls cannot be crossed or pushed through. Do not hard-code a separate board layout or path to the goal in the prompt.
+- This change combines visible floor cells, grid labels, and the coordinate summary in one display condition. It also introduces an action limit that the recorded baseline did not have. Compare runs as combined conditions; do not claim that one individual element caused any improvement.
+- Do not include legal-action lists, suggested moves, deadlock warnings, or computed solution hints in the display. They would add assistance beyond the current game state.
+
+For the current starting board, the display must contain the following grid and coordinates:
+
+```text
+    0 1 2 3 4 5 6
+0   # # # # # # #
+1   # - - . - - #
+2   # - - @ - - #
+3   # - - $ - - #
+4   # - - - - - #
+5   # - - - - - #
+6   # # # # # # #
+
+Player: row 2, column 3
+Box: row 3, column 3
+Goal: row 1, column 3
+```
+
 ## Persistence and failure behavior
 
 - Save the limit in game.json at initialization. A running game's limit must not change if the default in the program changes later.
@@ -45,11 +74,11 @@ Bound play in a Sokoban run and make exploration and recovery measurable. The ag
 
 ## Existing interfaces and scope
 
-- sokoban_workspace/src/sokoban.py: enforce and persist the budget; report remaining actions and game outcome.
+- sokoban_workspace/src/sokoban.py: enforce and persist the budget; display the board, labeled coordinates, remaining actions, and game outcome.
 - sokoban_workspace/task.prompt and, only if needed, sokoban_workspace/AGENTS.md: provide consistent game and output instructions.
 - tests/test_sokoban.py: exercise the game through its command-line interface and persisted state.
 - tests/test_container.py: update the existing Sokoban copy test, which still expects run-version and .run-version after the workspace was changed to use output/. Verify that copied instructions and prompt agree.
-- README.md: document the pilot limit and current output instructions.
+- README.md: document the pilot limit, board display, and current output instructions.
 - No new dependencies, new boards, solver, deadlock detection, injected errors, automatic per-difficulty scaling, or supervisor outcome changes.
 
 ## Examples
@@ -68,6 +97,9 @@ Use Python 3.12 and pytest, following the existing four-space indentation, snake
 
 - Run uv run pytest from the project root.
 - Test a fresh game's limit, persisted count, and display; verify that show does not consume an action.
+- Verify that the displayed grid includes row and column labels, visible floor cells, and the correct wall layout, player, box, and goal positions on initialization and after movement.
+- Verify that position labels use row/column order and zero-based indices, match the displayed grid and saved `(x, y)` state, and remain correct for `+` and `*`.
+- Verify that a blocked action and an undo show the unchanged or restored board and coordinates respectively, and that terminal action attempts report the existing terminal state without changing it.
 - Test a valid move, blocked move, successful undo, and empty-history undo; each consumes exactly one action and records its result.
 - Verify that undo restores the board without refunding or deleting earlier actions.
 - Verify that an unsolved game reaches action_limit_reached on action 24, and a game solved on action 24 reports solved.

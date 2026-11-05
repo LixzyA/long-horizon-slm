@@ -4,16 +4,19 @@ Solve the puzzle using the game program in this workspace. Work autonomously. Do
 
 ## Rules
 
-- The board is a grid. `#` is a wall, a space is empty floor, `@` is you, `$` is a box, and `.` is the goal.
+- The board is a grid. `#` is a wall, `-` is empty floor, `@` is you, `$` is a box, and `.` is the goal. Wall positions are shown on the board; neither you nor the box can pass through a wall.
 - `+` means you are on the goal. `*` means the box is on the goal.
+- Rows and columns are numbered from 0. Row 0 is at the top and column 0 is at the left. Up decreases the row; down increases it. Left decreases the column; right increases it. The game also displays the player, box, and goal coordinates as row and column.
 - You can move one square up, down, left, or right. You cannot move through walls.
 - If you move into the box and the square beyond it is empty floor or a goal, you push the box one square. You cannot pull a box or push it through a wall.
 - The puzzle is solved when the box is on the goal. Some legal pushes can make the puzzle unsolvable. If you make a mistake, use undo to reverse the most recent successful move; you may undo repeatedly.
 - The game reports blocked moves and whether the box is on the goal. It does not warn you about deadlocks.
+- You have 24 actions. Each direction attempt and each undo attempt counts as one action, including blocked moves and undo when there is nothing to undo. Showing the board does not use an action. The game displays actions used and remaining after every command.
+- The game stops accepting moves when solved or when the action limit is reached. If the last permitted action solves the puzzle, it counts as solved. Do not create another state file, restart, directly edit the state, or modify the game program to bypass the limit.
 
 ## How to play
 
-First follow the run-output instructions in AGENTS.md. Use that run directory for your state file and report. Substitute your actual run number for N below:
+First follow the run-output instructions in AGENTS.md. Use `output/` for your state file and report:
 
 ```text
 python3 src/sokoban.py --state output/game.json init
@@ -27,4 +30,4 @@ python3 src/sokoban.py --state output/game.json undo
 
 Run `init` only once. Choose a direction from the displayed board after each command. Do not directly edit the state file. The game saves the current state and action history there.
 
-Write `report.md` in the same run directory whether or not you solve the puzzle. State the outcome and summarize any mistakes and undo actions. If you cannot finish, report what happened and do not claim success. In your final response, give the paths of the state file and report and state whether the puzzle was solved.
+When the game reports `solved` or `action_limit_reached`, stop playing. Write `output/report.md` whether or not you solve the puzzle. State the outcome, actions used and remaining, and summarize blocked moves and undo actions. If you cannot finish, report what happened and do not claim success. In your final response, give the paths of the state file and report and state whether the puzzle was solved.
