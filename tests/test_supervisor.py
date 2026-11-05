@@ -150,7 +150,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
         lambda model, context: {
             "model": model,
             "model_digest": "digest",
-            "allocated_context": 131072,
+            "allocated_context": 32768,
         },
     )
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
@@ -171,7 +171,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     assert not any("PI_REPETITION" in value for value in seen)
     model_info = list((tmp_path / "supervisor-runs").glob("*/model.json"))
     assert (
-        json.loads(model_info[0].read_text(encoding="utf-8"))["model"] == "qwen-custom"
+        json.loads(model_info[0].read_text(encoding="utf-8"))["model"] == "Qwen3.5-custom-32k"
     )
     assert json.loads(model_info[0].read_text(encoding="utf-8"))["thinking"] is (
         thinking == "high"

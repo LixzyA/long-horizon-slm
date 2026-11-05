@@ -10,8 +10,8 @@ const config = {providers: {ollama: {
   api: "openai-completions",
   baseUrl: "http://gateway:8080/v1",
   apiKey: "$MODEL_PROXY_TOKEN",
-  models: [{id: "qwen-custom", reasoning: true, contextWindow: 128000, maxTokens: 16384, compat: {supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens"}}]
+  models: [{id: "Qwen3.5-custom-32k", reasoning: true, contextWindow: 32768, maxTokens: 16384, compat: {supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens"}}]
 }}};
 fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "models.json"), JSON.stringify(config));
 JS
-exec pi --provider ollama --model qwen-custom --thinking "$THINKING_MODE" --mode rpc --session-dir /workspace/.pi-sessions
+exec pi --provider ollama --model Qwen3.5-custom-32k --thinking "$THINKING_MODE" --mode rpc --session-dir /workspace/.pi-sessions

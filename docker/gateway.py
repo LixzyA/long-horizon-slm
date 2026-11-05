@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MODEL = "qwen-custom"
+MODEL = "Qwen3.5-custom-32k"
 OLLAMA = "http://host.docker.internal:11434"
 MODEL_ENDPOINT = OLLAMA + "/v1/chat/completions"
 MODEL_FIELDS = {
@@ -128,7 +128,7 @@ def model_ready() -> bool:
         item.get("name") in (MODEL, MODEL + ":latest")
         and item.get("digest") == os.environ["MODEL_DIGEST"]
         and isinstance(item.get("context_length"), int)
-        and item["context_length"] >= 128000
+        and item["context_length"] == 32768
         for item in models
     )
 

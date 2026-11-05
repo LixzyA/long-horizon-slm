@@ -21,8 +21,8 @@ import ollama_model
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = ROOT / "experiment_workspace"
-MODEL = "qwen-custom"
-CONTEXT_LENGTH = 128_000
+MODEL = "Qwen3.5-custom-32k"
+CONTEXT_LENGTH = 32_768
 PROMPT = "Complete the assignment below. Use the current directory as your working directory.\n\n"
 
 

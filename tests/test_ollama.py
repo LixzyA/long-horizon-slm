@@ -19,15 +19,15 @@ def fake_responses(monkeypatch: pytest.MonkeyPatch, context: int) -> None:
             }
         elif url.endswith("/api/tags"):
             value = {
-                "models": [{"name": "qwen-custom:latest", "digest": "model-digest"}]
+                "models": [{"name": "Qwen3.5-custom-32k:latest", "digest": "model-digest"}]
             }
         elif url.endswith("/api/generate"):
-            value = {"model": "qwen-custom", "done_reason": "load"}
+            value = {"model": "Qwen3.5-custom-32k", "done_reason": "load"}
         elif url.endswith("/api/ps"):
             value = {
                 "models": [
                     {
-                        "name": "qwen-custom:latest",
+                        "name": "Qwen3.5-custom-32k:latest",
                         "digest": "model-digest",
                         "context_length": context,
                     }
@@ -43,16 +43,17 @@ def fake_responses(monkeypatch: pytest.MonkeyPatch, context: int) -> None:
 def test_preflight_verifies_allocated_context_and_records_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_responses(monkeypatch, 131072)
-    info = ollama_model.prepare_model("qwen-custom", 128000)
+    fake_responses(monkeypatch, 32768)
+    info = ollama_model.prepare_model("Qwen3.5-custom-32k", 32768)
     assert info["model_digest"] == "model-digest"
-    assert info["allocated_context"] == 131072
+    assert info["allocated_context"] == 32768
     assert "temperature 1" in info["parameters"]
 
 
-def test_preflight_rejects_a_smaller_allocated_context(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("context", [32767, 32769])
+def test_preflight_rejects_an_incorrect_allocated_context(
+    monkeypatch: pytest.MonkeyPatch, context: int
 ) -> None:
-    fake_responses(monkeypatch, 4096)
+    fake_responses(monkeypatch, context)
     with pytest.raises(RuntimeError, match="context"):
-        ollama_model.prepare_model("qwen-custom", 128000)
+        ollama_model.prepare_model("Qwen3.5-custom-32k", 32768)

@@ -8,7 +8,7 @@ The Windows supervisor runs one Pi task inside a Docker container. It copies `ex
 ## Prerequisites
 
 1. Start Docker Desktop with Linux containers.
-2. Start Ollama and make sure the local `qwen-custom` model is installed and supports tools and thinking. Configure Ollama to allocate at least 128,000 tokens of context. Check `ollama show qwen-custom --parameters` for its saved sampling settings.
+2. Start Ollama. Create the 32k model with `ollama create Qwen3.5-custom-32k -f ollama_model/Modelfile32k`. This uses the existing `Qwen3.5-custom` model. Check `ollama show Qwen3.5-custom-32k --parameters` for its saved settings.
 3. Install Pi 1.4.0 at its normal user location.
 4. From the project directory, prepare the environment and build the image:
 
@@ -53,20 +53,20 @@ The supervisor supplies these settings to Pi. They are not command-line options 
 
 | Setting | Current value | Purpose |
 | --- | --- | --- |
-| Model | `qwen-custom` | Use the locally installed Ollama model. |
-| Pi context window | `128000` | Require Ollama to allocate at least this much context; Pi uses 128,000. |
+| Model | `Qwen3.5-custom-32k` | Use the locally installed Ollama model. |
+| Pi context window | `32768` | Require Ollama to allocate exactly this much context; Pi uses 32,768. |
 | Thinking | `high` by default | Use `--thinking off` to disable thinking. The gateway sends the selected mode to Ollama. |
-| Sampling | `qwen-custom` settings | Preserve the model's saved sampling parameters; the gateway rejects request-level overrides. |
+| Sampling | `Qwen3.5-custom-32k` settings | Preserve the model's saved sampling parameters; the gateway rejects request-level overrides. |
 | Pi mode | `rpc` | Send the prompt and abort through Pi's RPC interface. |
 | Pi session directory | `workspace/.pi-sessions/` within the run record | Retain Pi session files for this run. |
 
-Edit `experiment_workspace/task.prompt` to change the assignment. The model name and minimum context are part of the gateway configuration as well as the supervisor; do not change one without updating the other. The supervisor does not provide command-line options for these settings.
+Edit `experiment_workspace/task.prompt` to change the assignment. The model name and context are part of the gateway configuration as well as the supervisor; do not change one without updating the other. The supervisor does not provide command-line options for these settings.
 
 The container has a read-only root filesystem, a writable temporary directory, and one writable host bind mount: the per-run workspace copy. Linux system files remain visible inside the container. It runs as a non-root user with capabilities dropped. The original Windows paths in the copied `AGENTS.md` are replaced with Linux instructions; its run-output rules remain. Links and Windows junctions in the source workspace are rejected before copying.
 
 The copy retains its own `.run-version` and output folders. Changes to the copy, including its counter, are not merged back into the original workspace, so separate runs can have the same version number inside their different record directories.
 
-Pi runs on a dedicated Docker internal network in isolated gateway mode. Before the task starts, the supervisor verifies that the agent cannot reach Ollama or the public internet directly, that the gateway rejects Ollama management requests, and that private web destinations are blocked. A separate gateway container can access Ollama, but only forwards authenticated chat-completion requests for `qwen-custom` with the selected thinking mode and no sampling overrides. It checks the loaded model digest and allocated context before each inference request. If the isolation check fails, the run stops before Pi receives the task.
+Pi runs on a dedicated Docker internal network in isolated gateway mode. Before the task starts, the supervisor verifies that the agent cannot reach Ollama or the public internet directly, that the gateway rejects Ollama management requests, and that private web destinations are blocked. A separate gateway container can access Ollama, but only forwards authenticated chat-completion requests for `Qwen3.5-custom-32k` with the selected thinking mode and no sampling overrides. It checks the loaded model digest and allocated context before each inference request. If the isolation check fails, the run stops before Pi receives the task.
 
 Public HTTP and HTTPS research goes through the gateway on ports 80 and 443. The gateway resolves public domains using certificate-verified DNS over HTTPS at Cloudflare (`1.1.1.1`), rejects non-public addresses, and connects to the validated address. The domain names looked up for research are sent to that DNS service. Programs must honor `HTTP_PROXY` or `HTTPS_PROXY`; tools that ignore them cannot reach the internet directly. Public web access depends on network availability.
 

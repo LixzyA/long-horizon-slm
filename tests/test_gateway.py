@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import threading
 import urllib.error
@@ -55,27 +56,27 @@ def test_web_gateway_pins_the_validated_public_address(
 
 def test_model_gateway_only_accepts_thinking_for_the_selected_model() -> None:
     assert gateway.valid_model_request(
-        {"model": "qwen-custom", "reasoning_effort": "high"}
+        {"model": "Qwen3.5-custom-32k", "reasoning_effort": "high"}
     )
     assert not gateway.valid_model_request(
-        {"model": "qwen-custom", "reasoning_effort": "none"}
+        {"model": "Qwen3.5-custom-32k", "reasoning_effort": "none"}
     )
     assert not gateway.valid_model_request(
         {"model": "other", "reasoning_effort": "high"}
     )
     assert not gateway.valid_model_request(
-        {"model": "qwen-custom", "reasoning_effort": "high", "temperature": 0.3}
+        {"model": "Qwen3.5-custom-32k", "reasoning_effort": "high", "temperature": 0.3}
     )
     assert not gateway.valid_model_request(
         {
-            "model": "qwen-custom",
+            "model": "Qwen3.5-custom-32k",
             "reasoning_effort": "high",
             "reasoning": {"effort": "none"},
         }
     )
     assert not gateway.valid_model_request(
         {
-            "model": "qwen-custom",
+            "model": "Qwen3.5-custom-32k",
             "reasoning_effort": "high",
             "options": {"temperature": 0.3},
         }
@@ -122,7 +123,7 @@ def test_model_gateway_forwards_only_authorized_thinking_inference(
             headers={"Authorization": "Bearer " + token},
         )
 
-    valid = {"model": "qwen-custom"}
+    valid = {"model": "Qwen3.5-custom-32k"}
     if mode == "high":
         valid["reasoning_effort"] = "high"
     try:
@@ -148,11 +149,37 @@ def test_model_gateway_forwards_only_authorized_thinking_inference(
 
 
 def test_off_mode_rejects_requests_that_enable_thinking() -> None:
-    assert gateway.valid_model_request({"model": "qwen-custom"}, "off")
+    assert gateway.valid_model_request({"model": "Qwen3.5-custom-32k"}, "off")
     assert gateway.valid_model_request(
-        {"model": "qwen-custom", "reasoning_effort": "none"}, "off"
+        {"model": "Qwen3.5-custom-32k", "reasoning_effort": "none"}, "off"
     )
     assert not gateway.valid_model_request(
-        {"model": "qwen-custom", "reasoning_effort": "high"}, "off"
+        {"model": "Qwen3.5-custom-32k", "reasoning_effort": "high"}, "off"
     )
-    assert not gateway.valid_model_request({"model": "qwen-custom"}, "invalid")
+    assert not gateway.valid_model_request({"model": "Qwen3.5-custom-32k"}, "invalid")
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"), [(32767, False), (32768, True), (32769, False)]
+)
+def test_model_ready_requires_exact_context(
+    monkeypatch: pytest.MonkeyPatch, context: int, expected: bool
+) -> None:
+    def open_url(request: object, timeout: int):
+        url = request.full_url if hasattr(request, "full_url") else request
+        value = {}
+        if url.endswith("/api/ps"):
+            value = {
+                "models": [
+                    {
+                        "name": gateway.MODEL + ":latest",
+                        "digest": "digest",
+                        "context_length": context,
+                    }
+                ]
+            }
+        return io.BytesIO(json.dumps(value).encode())
+
+    monkeypatch.setenv("MODEL_DIGEST", "digest")
+    monkeypatch.setattr(gateway.urllib.request, "urlopen", open_url)
+    assert gateway.model_ready() is expected
