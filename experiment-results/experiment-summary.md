@@ -19,7 +19,7 @@ The version 0 and version 1 output folders were absent from the workspace at the
 | Run | Outcome | Primary findings | Report |
 | --- | --- | --- | --- |
 | `20261030-100753-8ce2c174` | Incomplete | The agent read the seed but created no deliverables. Its last response hit the 16,384-token output limit. | [30 October run](experiment-results-20261030-100753.md) |
-| `20261030-103850-af74bd43` | Incomplete | With `off` for thinking, the agent read the seed but made no deliverables. It left an empty file named `output`. | [Thinking-off run](experiment-results-20261030-103850.md) |
+| `20261030-103850-af74bd43` | Incomplete | With `off` for thinking, the anvgent read the seed but made no deliverables. It left an empty file named `output`. | [Thinking-off run](experiment-results-20261030-103850.md) |
 
 The supervisor recorded `settled`. That status does not establish task success.
 The deadline and identical-call loop detector did not stop either run.

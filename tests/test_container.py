@@ -74,3 +74,14 @@ def test_cleanup_accepts_container_already_removed(
         ),
     )
     assert container_run.cleanup_container("long-horizon-test") is True
+
+
+def test_sokoban_workspace_copies_task_and_instructions(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[1] / "sokoban_workspace"
+    workspace = container_run.prepare_workspace(source, tmp_path / "run")
+    assert "Sokoban" in (workspace / "task.prompt").read_text(encoding="utf-8")
+    instructions = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+    assert "/workspace" in instructions
+    assert "run-version" in instructions
+    assert (workspace / "src" / "sokoban.py").is_file()
+    assert int((workspace / ".run-version").read_text(encoding="utf-8")) == 0

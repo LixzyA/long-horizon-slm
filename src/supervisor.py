@@ -393,6 +393,7 @@ def main() -> int:
     )
     parser.add_argument("--limit-seconds", type=float, default=2700)
     parser.add_argument("--thinking", choices=("high", "off"), default="high")
+    parser.add_argument("--task", choices=("profile", "sokoban"), default="profile")
     args = parser.parse_args()
     if not math.isfinite(args.limit_seconds) or args.limit_seconds <= 0:
         parser.error("--limit-seconds must be a positive finite number")
@@ -405,7 +406,8 @@ def main() -> int:
     print(f"Run records: {run_dir}", flush=True)
     name = "long-horizon-" + uuid.uuid4().hex
     try:
-        workspace = container_run.prepare_workspace(WORKSPACE, run_dir)
+        source = WORKSPACE if args.task == "profile" else ROOT / "sokoban_workspace"
+        workspace = container_run.prepare_workspace(source, run_dir)
         assignment = (workspace / "task.prompt").read_text(encoding="utf-8")
         if not assignment.strip():
             raise ValueError("task.prompt is empty.")

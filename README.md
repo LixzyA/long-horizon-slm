@@ -3,7 +3,7 @@ This is a project for researching long horizon tasks on small language models. T
 
 # Supervised Pi run
 
-The Windows supervisor runs one Pi task inside a Docker container. It copies `experiment_workspace/` into a new run directory and mounts only that copy at `/workspace`. The supervisor reads `task.prompt` from that copy and sends its contents directly to Pi; it also enforces the time limit and detects repeated failed calls. An absent, empty, or unreadable `task.prompt` stops preparation before Pi starts. The original workspace is not modified by the agent.
+The Windows supervisor runs one Pi task inside a Docker container. It copies the selected workspace into a new run directory and mounts only that copy at `/workspace`. The supervisor reads `task.prompt` from that copy and sends its contents directly to Pi; it also enforces the time limit and detects repeated failed calls. An absent, empty, or unreadable `task.prompt` stops preparation before Pi starts. The original workspace is not modified by the agent.
 
 ## Prerequisites
 
@@ -31,6 +31,7 @@ uv run src/supervisor.py
 | --- | --- |
 | `--limit-seconds SECONDS` | Set the maximum task time in seconds. The value must be a positive, finite number. The default is `2700`. |
 | `--thinking MODE` | Set the Pi model mode to `high` or `off`. The default is `high`. |
+| `--task TASK` | Select `profile` (default) or `sokoban`. |
 | `-h`, `--help` | Show the command-line help and exit. No task starts. |
 
 For example, set a 60-second task limit:
@@ -60,7 +61,7 @@ The supervisor supplies these settings to Pi. They are not command-line options 
 | Pi mode | `rpc` | Send the prompt and abort through Pi's RPC interface. |
 | Pi session directory | `workspace/.pi-sessions/` within the run record | Retain Pi session files for this run. |
 
-Edit `experiment_workspace/task.prompt` to change the assignment. The model name and context are part of the gateway configuration as well as the supervisor; do not change one without updating the other. The supervisor does not provide command-line options for these settings.
+The default profile assignment remains in `experiment_workspace/task.prompt`. To run the separate one-box Sokoban pilot, use `uv run src/supervisor.py --task sokoban`. Its rules and instructions are in `sokoban_workspace/task.prompt`, and its run-output rules are in `sokoban_workspace/AGENTS.md`. The puzzle records each attempted move and undo in its run workspace. It does not detect deadlocks or inject errors. Edit the appropriate task prompt to change an assignment. The model name and context are part of the gateway configuration as well as the supervisor; do not change one without updating the other. The supervisor does not provide command-line options for these settings.
 
 The container has a read-only root filesystem, a writable temporary directory, and one writable host bind mount: the per-run workspace copy. Linux system files remain visible inside the container. It runs as a non-root user with capabilities dropped. The original Windows paths in the copied `AGENTS.md` are replaced with Linux instructions; its run-output rules remain. Links and Windows junctions in the source workspace are rejected before copying.
 

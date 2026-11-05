@@ -347,3 +347,20 @@ def test_each_condition_independently_resets_streak(
     for i in range(9):
         assert not call(f"after-{i}", "bash", {"command": "bad"}, True)
     assert call("trigger", "bash", {"command": "bad"}, True)
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [("profile", "experiment_workspace"), ("sokoban", "sokoban_workspace")],
+)
+def test_task_selects_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str, expected: str
+) -> None:
+    def prepare_workspace(source: Path, run: Path) -> Path:
+        assert source.name == expected
+        raise ValueError("stop before launch")
+
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setattr(supervisor.container_run, "prepare_workspace", prepare_workspace)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", task])
+    assert supervisor.main() == 1

@@ -1,0 +1,30 @@
+# Assignment: Solve a small Sokoban puzzle
+
+Solve the puzzle using the game program in this workspace. Work autonomously. Do not install software, use the internet, write a solver, or change the game program. Make one game move per command so that the record shows each decision.
+
+## Rules
+
+- The board is a grid. `#` is a wall, a space is empty floor, `@` is you, `$` is a box, and `.` is the goal.
+- `+` means you are on the goal. `*` means the box is on the goal.
+- You can move one square up, down, left, or right. You cannot move through walls.
+- If you move into the box and the square beyond it is empty floor or a goal, you push the box one square. You cannot pull a box or push it through a wall.
+- The puzzle is solved when the box is on the goal. Some legal pushes can make the puzzle unsolvable. If you make a mistake, use undo to reverse the most recent successful move; you may undo repeatedly.
+- The game reports blocked moves and whether the box is on the goal. It does not warn you about deadlocks.
+
+## How to play
+
+First follow the run-output instructions in AGENTS.md. Use that run directory for your state file and report. Substitute your actual run number for N below:
+
+```text
+python3 src/sokoban.py --state output/run-version-N/game.json init
+python3 src/sokoban.py --state output/run-version-N/game.json show
+python3 src/sokoban.py --state output/run-version-N/game.json up
+python3 src/sokoban.py --state output/run-version-N/game.json down
+python3 src/sokoban.py --state output/run-version-N/game.json left
+python3 src/sokoban.py --state output/run-version-N/game.json right
+python3 src/sokoban.py --state output/run-version-N/game.json undo
+```
+
+Run `init` only once. Choose a direction from the displayed board after each command. Do not directly edit the state file. The game saves the current state and action history there.
+
+Write `report.md` in the same run directory whether or not you solve the puzzle. State the outcome and summarize any mistakes and undo actions. If you cannot finish, report what happened and do not claim success. In your final response, give the paths of the state file and report and state whether the puzzle was solved.
