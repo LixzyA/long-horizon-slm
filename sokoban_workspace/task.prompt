@@ -16,13 +16,13 @@ Solve the puzzle using the game program in this workspace. Work autonomously. Do
 First follow the run-output instructions in AGENTS.md. Use that run directory for your state file and report. Substitute your actual run number for N below:
 
 ```text
-python3 src/sokoban.py --state output/run-version-N/game.json init
-python3 src/sokoban.py --state output/run-version-N/game.json show
-python3 src/sokoban.py --state output/run-version-N/game.json up
-python3 src/sokoban.py --state output/run-version-N/game.json down
-python3 src/sokoban.py --state output/run-version-N/game.json left
-python3 src/sokoban.py --state output/run-version-N/game.json right
-python3 src/sokoban.py --state output/run-version-N/game.json undo
+python3 src/sokoban.py --state output/game.json init
+python3 src/sokoban.py --state output/game.json show
+python3 src/sokoban.py --state output/game.json up
+python3 src/sokoban.py --state output/game.json down
+python3 src/sokoban.py --state output/game.json left
+python3 src/sokoban.py --state output/game.json right
+python3 src/sokoban.py --state output/game.json undo
 ```
 
 Run `init` only once. Choose a direction from the displayed board after each command. Do not directly edit the state file. The game saves the current state and action history there.

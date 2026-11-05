@@ -1,0 +1,77 @@
+<div id="sokoban-replay">
+  <style>
+    #sokoban-replay { display:grid; gap:12px; color:var(--foreground); }
+    #sokoban-replay .board { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); width:min(100%,294px); gap:3px; }
+    #sokoban-replay .cell { aspect-ratio:1; display:grid; place-items:center; background:var(--secondary); color:var(--secondary-foreground); font-weight:500; }
+    #sokoban-replay .wall { background:var(--foreground); }
+    #sokoban-replay .goal { color:var(--green); }
+    #sokoban-replay .player { background:var(--blue); color:var(--background); }
+    #sokoban-replay .box { background:var(--orange); color:var(--background); }
+    #sokoban-replay .controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    #sokoban-replay .range { width:min(100%,294px); }
+  </style>
+  <div class="controls">
+    <button type="button" class="btn" id="sr-prev">Previous</button>
+    <button type="button" class="btn" id="sr-next">Next</button>
+    <span id="sr-step" class="tabular-nums"></span>
+  </div>
+  <label for="sr-slider" class="sr-only">Choose action</label>
+  <input class="form-range range" id="sr-slider" type="range" min="0" max="19" value="0" step="1">
+  <div id="sr-board" class="board" role="img" aria-label="Sokoban board"></div>
+  <div id="sr-detail" aria-live="polite"></div>
+  <div class="text-small">P = player · B = box · ● = goal · dark squares = walls</div>
+  <script>
+    (() => {
+      const root = document.getElementById('sokoban-replay');
+      const data = [
+        ['Start',3,2,3,3], ['Right',4,2,3,3], ['Down',4,3,3,3],
+        ['Left',3,3,2,3], ['Up',3,2,2,3], ['Right',4,2,2,3],
+        ['Undo',3,2,2,3], ['Down',3,3,2,3], ['Left',2,3,1,3],
+        ['Up',2,2,1,3], ['Left',1,2,1,3], ['Down',1,3,1,4],
+        ['Undo',1,2,1,3], ['Right',2,2,1,3], ['Up',2,1,1,3],
+        ['Right',3,1,1,3], ['Up',3,1,1,3], ['Down',3,2,1,3],
+        ['Right',4,2,1,3], ['Left',3,2,1,3]
+      ];
+      const notes = {
+        3:'The first push moves the box left, away from the goal.',
+        6:'Undo reverses the previous player move; the box stays where it is.',
+        8:'The box reaches the left wall: it can no longer be pushed right.',
+        11:'The box is pushed down, but remains against the left wall.',
+        12:'Undo reverses the downward push; the earlier wall trap remains.',
+        16:'Blocked by the top wall; the board does not change.',
+        19:'Final state: the box remains trapped against the left wall.'
+      };
+      const board = root.querySelector('#sr-board');
+      const detail = root.querySelector('#sr-detail');
+      const step = root.querySelector('#sr-step');
+      const slider = root.querySelector('#sr-slider');
+      const prev = root.querySelector('#sr-prev');
+      const next = root.querySelector('#sr-next');
+      let index = 0;
+      function render() {
+        const [action, px, py, bx, by] = data[index];
+        board.replaceChildren();
+        for (let y=0; y<7; y++) for (let x=0; x<7; x++) {
+          const cell = document.createElement('div');
+          const wall = x===0 || x===6 || y===0 || y===6;
+          const goal = x===3 && y===1;
+          const player = x===px && y===py;
+          const box = x===bx && y===by;
+          cell.className = 'cell' + (wall ? ' wall' : '') + (goal ? ' goal' : '') + (player ? ' player' : '') + (box ? ' box' : '');
+          cell.textContent = player ? (goal ? 'P●' : 'P') : box ? (goal ? 'B●' : 'B') : goal ? '●' : '';
+          board.appendChild(cell);
+        }
+        board.setAttribute('aria-label', 'Board after action ' + index + '. Player column ' + px + ', row ' + py + '; box column ' + bx + ', row ' + by + '; goal column 3, row 1.');
+        step.textContent = 'Action ' + index + ' / 19 · ' + action;
+        detail.textContent = notes[index] || (index === 0 ? 'Initial board.' : action + '.');
+        slider.value = index;
+        prev.disabled = index === 0;
+        next.disabled = index === 19;
+      }
+      prev.addEventListener('click', () => { index = Math.max(0,index-1); render(); });
+      next.addEventListener('click', () => { index = Math.min(19,index+1); render(); });
+      slider.addEventListener('input', () => { index = Number(slider.value); render(); });
+      render();
+    })();
+  </script>
+</div>
