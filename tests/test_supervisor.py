@@ -48,6 +48,21 @@ def test_finished_run_keeps_events_and_reports_completion(tmp_path: Path) -> Non
     assert any(r.get("type") == "agent_settled" for r in records)
 
 
+@pytest.mark.parametrize("recovered", [False, True])
+def test_model_error_is_recorded_unless_a_retry_recovers(tmp_path: Path, recovered: bool) -> None:
+    mode = "model_error_recovered" if recovered else "model_error"
+    result, records = run_case(tmp_path, mode, 3)
+    saved = json.loads((tmp_path / "outcome.json").read_text(encoding="utf-8"))
+    assert saved == result
+    assert any(r.get("message", {}).get("stopReason") == "error" for r in records)
+    assert result["status"] == ("settled" if recovered else "run_error")
+    assert result["model_stop_reason"] == ("stop" if recovered else "error")
+    if recovered:
+        assert "error" not in result
+    else:
+        assert result["error"] == "503 model unavailable"
+
+
 def test_timeout_requests_abort_before_forced_termination(tmp_path: Path) -> None:
     result, records = run_case(tmp_path, "abort")
     assert result["status"] == "timeout"

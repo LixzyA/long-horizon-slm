@@ -328,6 +328,7 @@ def supervise(
             start = time.monotonic()
             deadline = start + limit_seconds
             detector = LoopDetector()
+            last_assistant = {}
             while True:
                 event = receive(deadline, watch_game=game is not None)
                 if event is None:
@@ -348,9 +349,18 @@ def supervise(
                     result["status"] = "loop_detected"
                     result["loop_detection"] = detector.detection
                     break
+                if event.get("type") == "message_end":
+                    message = event.get("message")
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        last_assistant = message
                 if event.get("type") == "agent_settled":
                     result["status"] = "settled"
                     result["termination"] = "normal"
+                    if "stopReason" in last_assistant:
+                        result["model_stop_reason"] = last_assistant["stopReason"]
+                    if last_assistant.get("stopReason") == "error":
+                        result["status"] = "run_error"
+                        result["error"] = last_assistant.get("errorMessage") or "Model inference failed."
                     break
             if game is not None:
                 game.close()
