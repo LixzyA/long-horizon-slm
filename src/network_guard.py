@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -75,6 +76,13 @@ def run_docker(
     return result
 
 
+def resolve_image(image: str) -> str:
+    image_id = run_docker(["image", "inspect", "--format", "{{.Id}}", image]).stdout.strip()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise RuntimeError("Cannot identify the container image ID.")
+    return image_id
+
+
 def serve_game_requests(
     process: subprocess.Popen, game: SokobanAuthority, closing: threading.Event
 ) -> None:
@@ -110,6 +118,7 @@ class GatewaySession:
     def __init__(
         self, name: str, token: str, digest: str, thinking_mode: str = "high",
         game: SokobanAuthority | None = None,
+        *, image: str = IMAGE,
     ) -> None:
         self.network = name + "-network"
         self.gateway = name + "-gateway"
@@ -117,6 +126,7 @@ class GatewaySession:
         self.digest = digest
         self.thinking_mode = thinking_mode
         self.game = game
+        self.image = image
         self.closing = threading.Event()
         self.game_reader: threading.Thread | None = None
         self.network_created = False
@@ -169,7 +179,7 @@ class GatewaySession:
                     "SOKOBAN_ENABLED=" + ("1" if self.game is not None else "0"),
                     "--entrypoint",
                     "python",
-                    IMAGE,
+                    self.image,
                     "-u",
                     "/opt/gateway.py",
                 ],
@@ -217,7 +227,7 @@ class GatewaySession:
                     "PROBE_TOKEN=" + self.token,
                     "--entrypoint",
                     "python",
-                    IMAGE,
+                    self.image,
                     "-c",
                     PROBE,
                     host,

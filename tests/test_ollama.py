@@ -9,12 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import ollama_model
 
 
-def fake_responses(monkeypatch: pytest.MonkeyPatch, context: int) -> list:
+def fake_responses(monkeypatch: pytest.MonkeyPatch, context: int, version: object = "0.40.13") -> list:
     calls = []
     def open_url(request: object, timeout: int):
         url = request.full_url if hasattr(request, "full_url") else request
         calls.append((url.rsplit("/", 1)[-1], json.loads(request.data) if request.data else None))
-        if url.endswith("/api/show"):
+        if url.endswith("/api/version"):
+            value = {"version": version}
+        elif url.endswith("/api/show"):
             value = {
                 "capabilities": ["tools", "thinking"],
                 "parameters": "temperature 1\nrepeat_penalty 1.15",
@@ -49,6 +51,7 @@ def test_preflight_verifies_allocated_context_and_records_settings(
     calls = fake_responses(monkeypatch, 32768)
     info = ollama_model.prepare_model("Qwen3.5-custom-32k", 32768)
     assert info["model_digest"] == "model-digest"
+    assert info["ollama_version"] == "0.40.13"
     assert info["allocated_context"] == 32768
     assert "temperature 1" in info["parameters"]
     assert next(payload for endpoint, payload in calls if endpoint == "show") == {"model": "model-digest"}
@@ -61,4 +64,11 @@ def test_preflight_rejects_an_incorrect_allocated_context(
 ) -> None:
     fake_responses(monkeypatch, context)
     with pytest.raises(RuntimeError, match="context"):
+        ollama_model.prepare_model("Qwen3.5-custom-32k", 32768)
+
+
+@pytest.mark.parametrize("version", [None, "", 7])
+def test_preflight_rejects_an_unknown_runtime_version(monkeypatch: pytest.MonkeyPatch, version: object) -> None:
+    fake_responses(monkeypatch, 32768, version)
+    with pytest.raises(RuntimeError, match="version"):
         ollama_model.prepare_model("Qwen3.5-custom-32k", 32768)

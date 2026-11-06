@@ -52,14 +52,21 @@ for line in sys.stdin:
     )
     token = secrets.token_urlsafe(32)
     name = "long-horizon-test-" + uuid.uuid4().hex
-    guard = network_guard.GatewaySession(name, token, "unused", game=game)
+    image = network_guard.resolve_image(container_run.IMAGE)
+    guard = network_guard.GatewaySession(name, token, "unused", game=game, image=image)
+
+    def stop_at_limit() -> bool:
+        for container in (name, guard.gateway):
+            assert network_guard.run_docker(["inspect", "-f", "{{.Image}}", container]).stdout.strip() == image
+        return container_run.cleanup_container(name)
+
     try:
         guard.start()
-        command = container_run.container_command(workspace, name, guard.network, token)
+        command = container_run.container_command(workspace, name, guard.network, token, image=image)
         command = command[:-1] + ["--entrypoint", "python", command[-1], "-u", "fake_agent.py"]
         result = supervisor.supervise(
             command, "test", 60, run_dir, game=game,
-            stop_at_limit=lambda: container_run.cleanup_container(name),
+            stop_at_limit=stop_at_limit,
         )
         assert result["status"] == "action_limit"
         assert result["termination"] == "forced"

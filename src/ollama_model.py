@@ -24,6 +24,9 @@ def request_json(
 
 
 def prepare_model(model: str, expected_context: int) -> dict[str, Any]:
+    version = request_json("/api/version").get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError("Cannot identify the Ollama version.")
     names = {model, model + ":latest"}
     tags = request_json("/api/tags").get("models", [])
     matches = [item for item in tags if item.get("name") in names]
@@ -56,6 +59,7 @@ def prepare_model(model: str, expected_context: int) -> dict[str, Any]:
             f"Ollama allocated context {context}; exactly {expected_context} is required."
         )
     return {
+        "ollama_version": version,
         "model": model,
         "model_digest": digest,
         "parameters": details.get("parameters", ""),

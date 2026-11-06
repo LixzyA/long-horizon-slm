@@ -469,17 +469,19 @@ def main() -> int:
         model_info = ollama_model.prepare_model(MODEL, CONTEXT_LENGTH)
         model_info["thinking"] = args.thinking == "high"
         model_info["thinking_level"] = args.thinking
+        image_id = network_guard.resolve_image(container_run.IMAGE)
+        model_info["container_image_id"] = image_id
         (run_dir / "model.json").write_text(
             json.dumps(model_info, indent=2) + "\n", encoding="utf-8"
         )
         token = container_run.new_token()
         if game is None:
             guard = network_guard.GatewaySession(
-                name, token, model_info["model_digest"], args.thinking
+                name, token, model_info["model_digest"], args.thinking, image=image_id,
             )
         else:
             guard = network_guard.GatewaySession(
-                name, token, model_info["model_digest"], args.thinking, game=game
+                name, token, model_info["model_digest"], args.thinking, game=game, image=image_id,
             )
         guard.start()
     except (
@@ -492,7 +494,7 @@ def main() -> int:
         print(f"Could not prepare isolated run: {exc}", file=sys.stderr)
         return 1
     command = container_run.container_command(
-        workspace, name, guard.network, token, args.thinking
+        workspace, name, guard.network, token, args.thinking, image=image_id,
     )
     print(
         f"Waiting for Pi in Docker; time limit after prompt submission: {args.limit_seconds:g} seconds.",

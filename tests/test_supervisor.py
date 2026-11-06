@@ -18,6 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 FAKE = Path(__file__).with_name("fake_pi.py")
 
 
+@pytest.fixture
+def pinned_image(monkeypatch: pytest.MonkeyPatch) -> str:
+    image_id = "sha256:" + "a" * 64
+    monkeypatch.setattr(supervisor.network_guard, "resolve_image", lambda _: image_id)
+    return image_id
+
+
 def run_case(tmp_path: Path, mode: str, limit: float = 0.35) -> tuple[dict, list[dict]]:
     result = supervise(
         [sys.executable, str(FAKE), mode],
@@ -290,13 +297,15 @@ def test_launcher_uses_isolated_container_and_model_settings(
     cleanup_ok: bool,
     expected_code: int,
     thinking: str,
+    pinned_image: str,
 ) -> None:
     seen = []
     prompts = []
 
     class Guard:
-        def __init__(self, name: str, token: str, digest: str, mode: str) -> None:
+        def __init__(self, name: str, token: str, digest: str, mode: str, *, image: str) -> None:
             assert mode == thinking
+            assert image == pinned_image
             self.network = "verified-network"
 
         def start(self) -> None:
@@ -334,6 +343,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
             "model": model,
             "model_digest": "digest",
             "allocated_context": 32768,
+            "ollama_version": "0.40.13",
         },
     )
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
@@ -349,10 +359,14 @@ def test_launcher_uses_isolated_container_and_model_settings(
             == "failed"
         )
     assert seen[:2] == ["docker", "run"]
+    assert seen[-1] == pinned_image
     assert "verified-network" in seen
     assert f"THINKING_MODE={thinking}" in seen
     assert not any("PI_REPETITION" in value for value in seen)
     model_info = list((tmp_path / "supervisor-runs").glob("*/model.json"))
+    recorded = json.loads(model_info[0].read_text(encoding="utf-8"))
+    assert recorded["container_image_id"] == pinned_image
+    assert recorded["ollama_version"] == "0.40.13"
     assert (
         json.loads(model_info[0].read_text(encoding="utf-8"))["model"] == "Qwen3.5-custom-32k"
     )
@@ -388,10 +402,10 @@ def test_missing_or_empty_assignment_stops_before_launch(
 
 
 def test_failed_network_verification_stops_before_agent_launch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str,
 ) -> None:
     class FailedGuard:
-        def __init__(self, name: str, token: str, digest: str, mode: str) -> None:
+        def __init__(self, name: str, token: str, digest: str, mode: str, *, image: str) -> None:
             pass
 
         def start(self) -> None:
@@ -589,7 +603,7 @@ def test_sokoban_output_is_created_before_model_start(
 
 
 def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str,
 ) -> None:
     source = tmp_path / "sokoban_workspace"
     source.mkdir()
@@ -600,7 +614,8 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     seen = {}
 
     class Guard:
-        def __init__(self, name: str, token: str, digest: str, mode: str, game: SokobanAuthority) -> None:
+        def __init__(self, name: str, token: str, digest: str, mode: str, game: SokobanAuthority, *, image: str) -> None:
+            assert image == pinned_image
             self.network = "network"
             seen["game"] = game
 
@@ -611,6 +626,7 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
             return True
 
     def fake_supervise(command, prompt, limit_seconds, run_dir, *, game, stop_at_limit):
+        assert command[-1] == pinned_image
         assert game is seen["game"]
         assert game.path == run_dir / "game.json"
         assert "Goal: row 1, column 1" in game.execute("show")

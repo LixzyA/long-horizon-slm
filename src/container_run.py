@@ -38,7 +38,8 @@ def prepare_workspace(source: Path, run_dir: Path, *, require_agents: bool = Tru
 
 
 def container_command(
-    workspace: Path, name: str, network: str, token: str, thinking_mode: str = "high"
+    workspace: Path, name: str, network: str, token: str, thinking_mode: str = "high",
+    *, image: str = IMAGE,
 ) -> list[str]:
     return [
         "docker",
@@ -74,7 +75,7 @@ def container_command(
         "NO_PROXY=gateway,localhost,127.0.0.1",
         "--env",
         "no_proxy=gateway,localhost,127.0.0.1",
-        IMAGE,
+        image,
     ]
 
 

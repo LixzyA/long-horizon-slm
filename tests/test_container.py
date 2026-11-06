@@ -27,8 +27,9 @@ def test_run_workspace_is_an_independent_copy(tmp_path: Path) -> None:
 
 def test_container_command_mounts_only_run_workspace(tmp_path: Path) -> None:
     command = container_run.container_command(
-        tmp_path, "run-test", "isolated-network", "secret"
+        tmp_path, "run-test", "isolated-network", "secret", image="sha256:" + "a" * 64,
     )
+    assert command[-1] == "sha256:" + "a" * 64
     assert command.count("--mount") == 1
     assert f"type=bind,src={tmp_path},dst=/workspace" in command
     assert "--privileged" not in command
