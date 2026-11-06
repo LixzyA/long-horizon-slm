@@ -76,12 +76,26 @@ def test_cleanup_accepts_container_already_removed(
     assert container_run.cleanup_container("long-horizon-test") is True
 
 
-def test_sokoban_workspace_copies_task_and_instructions(tmp_path: Path) -> None:
+def test_sokoban_workspace_copies_task_without_agents_file(tmp_path: Path) -> None:
     source = Path(__file__).resolve().parents[1] / "sokoban_workspace"
-    workspace = container_run.prepare_workspace(source, tmp_path / "run")
+    workspace = container_run.prepare_workspace(
+        source, tmp_path / "run", require_agents=False
+    )
     assert "Sokoban" in (workspace / "task.prompt").read_text(encoding="utf-8")
-    instructions = (workspace / "AGENTS.md").read_text(encoding="utf-8")
-    assert "/workspace" in instructions
-    assert "output/" in instructions
-    assert "output/game.json" in (workspace / "task.prompt").read_text(encoding="utf-8")
-    assert (workspace / "src" / "sokoban.py").is_file()
+    prompt = (workspace / "task.prompt").read_text(encoding="utf-8")
+    assert "python3 src/play.py show" in prompt
+    assert "created `output/`" in prompt
+    assert "AGENTS.md" not in prompt
+    assert "<think>" in prompt and "REASON:" in prompt and "ACTION:" in prompt
+    assert all(field not in prompt for field in (
+        "{goal}", "{rules}", "{history}", "{current_observation}", "{remain_turn}"
+    ))
+    assert not (workspace / "AGENTS.md").exists()
+    assert (workspace / "src" / "play.py").is_file()
+
+
+def test_required_agents_file_still_required(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    with pytest.raises(FileNotFoundError):
+        container_run.prepare_workspace(source, tmp_path / "run")
