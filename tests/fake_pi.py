@@ -6,6 +6,8 @@ import time
 
 mode = sys.argv[1]
 print(json.dumps({"type": "test_cwd", "cwd": os.getcwd()}), flush=True)
+if mode == "invalid_startup":
+    print(sys.argv[2], flush=True)
 if mode == "exit":
     print("launcher: test startup failure", file=sys.stderr, flush=True)
     raise SystemExit(2)
@@ -46,6 +48,8 @@ for line in sys.stdin:
         )
         if mode == "crash":
             raise SystemExit(3)
+        if mode == "invalid_runtime":
+            print(sys.argv[2], flush=True)
         if mode in ("model_error", "model_error_recovered"):
             print(json.dumps({
                 "type": "message_end", "message": {

@@ -301,6 +301,8 @@ def supervise(
                             flush=True,
                         )
                         continue
+                    if not isinstance(record, dict):
+                        raise RuntimeError("Agent emitted a non-object JSON record.")
                     if record.get("type") not in (
                         "message_update",
                         "tool_execution_update",

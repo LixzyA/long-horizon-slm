@@ -263,6 +263,20 @@ def test_runtime_failure_is_not_reported_as_startup_failure(tmp_path: Path) -> N
     assert result["prompt_submitted_at_utc"] is not None
 
 
+@pytest.mark.parametrize("phase", ["startup", "runtime"])
+@pytest.mark.parametrize("value", [[], None, 7, "unexpected"])
+def test_non_object_rpc_is_reported_without_crashing(tmp_path: Path, phase: str, value: object) -> None:
+    result = supervise(
+        [sys.executable, str(FAKE), "invalid_" + phase, json.dumps(value)],
+        "test task", 3, tmp_path, grace_seconds=0.5,
+    )
+    saved = json.loads((tmp_path / "outcome.json").read_text(encoding="utf-8"))
+    assert saved == result
+    assert result["status"] == ("startup_error" if phase == "startup" else "run_error")
+    assert (result["prompt_submitted_at_utc"] is None) == (phase == "startup")
+    assert "non-object JSON" in result["error"]
+
+
 def test_rejects_invalid_time_limit(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         supervise([sys.executable, str(FAKE), "hang"], "task", 0, tmp_path)
