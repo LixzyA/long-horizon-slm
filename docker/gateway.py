@@ -2,13 +2,16 @@ import hmac
 import ipaddress
 import json
 import os
+import queue
 import select
 import socket
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODEL = "Qwen3.5-custom-32k"
@@ -24,6 +27,24 @@ MODEL_FIELDS = {
     "max_tokens",
     "reasoning_effort",
 }
+GAME_LOCK = threading.Lock()
+GAME_REPLIES = queue.Queue()
+
+
+def request_game(action: str) -> str:
+    with GAME_LOCK:
+        request_id = uuid.uuid4().hex
+        print(json.dumps({"type": "game_request", "id": request_id, "action": action}), flush=True)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                reply = GAME_REPLIES.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty as exc:
+                raise TimeoutError("Game request timed out; use show to check its state") from exc
+            if reply.get("id") == request_id:
+                if not reply.get("ok") or not isinstance(reply.get("output"), str):
+                    raise RuntimeError("Game service failed")
+                return reply["output"]
 
 
 def resolve_domain(host: str) -> list[str]:
@@ -113,7 +134,7 @@ def valid_model_request(body: object, thinking_mode: str = "high") -> bool:
 
 def model_ready() -> bool:
     data = json.dumps(
-        {"model": MODEL, "prompt": "", "stream": False, "keep_alive": "10m"}
+        {"model": os.environ["MODEL_DIGEST"], "prompt": "", "stream": False, "keep_alive": "10m"}
     ).encode("utf-8")
     request = urllib.request.Request(
         OLLAMA + "/api/generate",
@@ -125,8 +146,7 @@ def model_ready() -> bool:
     with urllib.request.urlopen(OLLAMA + "/api/ps", timeout=10) as response:
         models = json.load(response).get("models", [])
     return any(
-        item.get("name") in (MODEL, MODEL + ":latest")
-        and item.get("digest") == os.environ["MODEL_DIGEST"]
+        item.get("digest") == os.environ["MODEL_DIGEST"]
         and isinstance(item.get("context_length"), int)
         and item["context_length"] == 32768
         for item in models
@@ -173,6 +193,9 @@ class QuietHandler(BaseHTTPRequestHandler):
 
 class ModelHandler(QuietHandler):
     def do_POST(self) -> None:
+        if self.path == "/sokoban" and os.environ.get("SOKOBAN_ENABLED") == "1":
+            self.game_action()
+            return
         if self.path != "/v1/chat/completions":
             self.send_error(404)
             return
@@ -196,6 +219,7 @@ class ModelHandler(QuietHandler):
                 return
             if thinking_mode == "off":
                 body["reasoning_effort"] = "none"
+            body["model"] = os.environ["MODEL_DIGEST"]
             raw = json.dumps(body).encode("utf-8")
             if not model_ready():
                 self.send_error(503, "Model identity or context could not be verified")
@@ -227,6 +251,36 @@ class ModelHandler(QuietHandler):
             self.wfile.write(exc.read(65536))
         except (OSError, ValueError, KeyError, urllib.error.URLError):
             self.close_connection = True
+
+    def game_action(self) -> None:
+        if not hmac.compare_digest(
+            self.headers.get("Authorization", ""), "Bearer " + os.environ["GATEWAY_TOKEN"]
+        ):
+            self.send_error(403)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 1024:
+                raise ValueError("Invalid request length")
+            body = json.loads(self.rfile.read(length))
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"action"}
+                or body["action"] not in ("show", "history", "up", "down", "left", "right", "undo")
+            ):
+                raise ValueError("Invalid game action")
+        except (ValueError, TypeError):
+            self.send_error(400)
+            return
+        try:
+            output = request_game(body["action"]).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(output)))
+            self.end_headers()
+            self.wfile.write(output)
+        except (OSError, RuntimeError):
+            self.send_error(503, "Game service unavailable")
 
 
 class WebHandler(QuietHandler):
@@ -312,7 +366,16 @@ def main() -> None:
     for server in servers:
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    sys.stdin.buffer.read()
+    if os.environ.get("SOKOBAN_ENABLED") == "1":
+        for line in sys.stdin:
+            try:
+                reply = json.loads(line)
+                if isinstance(reply, dict):
+                    GAME_REPLIES.put(reply)
+            except ValueError:
+                continue
+    else:
+        sys.stdin.buffer.read()
     for server in servers:
         server.shutdown()
         server.server_close()

@@ -66,7 +66,7 @@ def play(state: dict, action: str) -> str:
 
 def validate_state(state: object) -> dict:
     if not isinstance(state, dict):
-        raise ValueError("invalid state")
+        raise TypeError("invalid state")
     limit = state.get("action_limit")
     actions = state.get("actions")
     if type(limit) is not int or limit <= 0 or not isinstance(actions, list) or len(actions) > limit:

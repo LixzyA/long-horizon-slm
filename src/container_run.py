@@ -8,7 +8,7 @@ from pathlib import Path
 IMAGE = "long-horizon-pi:1.4.0"
 
 
-def prepare_workspace(source: Path, run_dir: Path) -> Path:
+def prepare_workspace(source: Path, run_dir: Path, *, require_agents: bool = True) -> Path:
     if source.is_symlink() or os.path.isjunction(source):
         raise ValueError(f"Workspace contains a link or junction: {source}")
     for root, directories, files in os.walk(source, followlinks=False):
@@ -19,6 +19,8 @@ def prepare_workspace(source: Path, run_dir: Path) -> Path:
     workspace = run_dir / "workspace"
     shutil.copytree(source, workspace)
     agents = workspace / "AGENTS.md"
+    if not require_agents and not agents.exists():
+        return workspace
     text = agents.read_text(encoding="utf-8")
     _, separator, remainder = text.partition("# Run output")
     if not separator:
@@ -36,7 +38,8 @@ def prepare_workspace(source: Path, run_dir: Path) -> Path:
 
 
 def container_command(
-    workspace: Path, name: str, network: str, token: str, thinking_mode: str = "high"
+    workspace: Path, name: str, network: str, token: str, thinking_mode: str = "high",
+    *, image: str = IMAGE,
 ) -> list[str]:
     return [
         "docker",
@@ -72,7 +75,7 @@ def container_command(
         "NO_PROXY=gateway,localhost,127.0.0.1",
         "--env",
         "no_proxy=gateway,localhost,127.0.0.1",
-        IMAGE,
+        image,
     ]
 
 

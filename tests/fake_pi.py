@@ -6,6 +6,8 @@ import time
 
 mode = sys.argv[1]
 print(json.dumps({"type": "test_cwd", "cwd": os.getcwd()}), flush=True)
+if mode == "invalid_startup":
+    print(sys.argv[2], flush=True)
 if mode == "exit":
     print("launcher: test startup failure", file=sys.stderr, flush=True)
     raise SystemExit(2)
@@ -46,7 +48,15 @@ for line in sys.stdin:
         )
         if mode == "crash":
             raise SystemExit(3)
-        if mode in ("complete", "loop", "loop_hang"):
+        if mode == "invalid_runtime":
+            print(sys.argv[2], flush=True)
+        if mode in ("model_error", "model_error_recovered"):
+            print(json.dumps({
+                "type": "message_end", "message": {
+                    "role": "assistant", "stopReason": "error", "errorMessage": "503 model unavailable",
+                },
+            }), flush=True)
+        if mode in ("complete", "loop", "loop_hang", "model_error_recovered"):
             print(
                 json.dumps(
                     {
@@ -72,7 +82,7 @@ for line in sys.stdin:
                 json.dumps(
                     {
                         "type": "message_end",
-                        "message": {"role": "assistant", "content": "complete"},
+                        "message": {"role": "assistant", "content": "complete", "stopReason": "stop"},
                     }
                 ),
                 flush=True,
@@ -103,7 +113,7 @@ for line in sys.stdin:
                     ),
                     flush=True,
                 )
-        if mode == "complete":
+        if mode in ("complete", "model_error", "model_error_recovered"):
             print(json.dumps({"type": "agent_settled"}), flush=True)
     elif request["type"] == "abort" and mode in ("abort", "loop"):
         print(

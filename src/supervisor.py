@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from ctypes import wintypes
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import container_run
 import network_guard
 import ollama_model
+from sokoban_authority import SokobanAuthority
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = ROOT / "experiment_workspace"
@@ -205,6 +207,8 @@ def supervise(
     run_dir: Path,
     grace_seconds: float = 5,
     startup_seconds: float = 60,
+    game: SokobanAuthority | None = None,
+    stop_at_limit: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     if not math.isfinite(limit_seconds) or limit_seconds <= 0:
         raise ValueError("Time limit must be a positive finite number.")
@@ -269,14 +273,21 @@ def supervise(
                 process.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
                 process.stdin.flush()
 
-            def receive(deadline):
+            def receive(deadline, watch_game=False):
                 while True:
+                    if watch_game and game is not None:
+                        if game.limit_reached.is_set():
+                            return {"type": "sokoban_action_limit"}
+                        if game.failed.is_set():
+                            raise RuntimeError("Sokoban game service failed.")
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return None
                     try:
-                        line = pending.get(timeout=remaining)
+                        line = pending.get(timeout=min(remaining, 0.1) if watch_game else remaining)
                     except queue.Empty:
+                        if watch_game:
+                            continue
                         return None
                     if line is None:
                         raise RuntimeError("Agent exited before the operation settled.")
@@ -290,6 +301,8 @@ def supervise(
                             flush=True,
                         )
                         continue
+                    if not isinstance(record, dict):
+                        raise RuntimeError("Agent emitted a non-object JSON record.")
                     if record.get("type") not in (
                         "message_update",
                         "tool_execution_update",
@@ -317,10 +330,16 @@ def supervise(
             start = time.monotonic()
             deadline = start + limit_seconds
             detector = LoopDetector()
+            last_assistant = {}
             while True:
-                event = receive(deadline)
+                event = receive(deadline, watch_game=game is not None)
                 if event is None:
                     result["status"] = "timeout"
+                    break
+                if event.get("type") == "sokoban_action_limit" or (
+                    game is not None and game.limit_reached.is_set()
+                ):
+                    result["status"] = "action_limit"
                     break
                 if (
                     event.get("type") == "response"
@@ -332,10 +351,23 @@ def supervise(
                     result["status"] = "loop_detected"
                     result["loop_detection"] = detector.detection
                     break
+                if event.get("type") == "message_end":
+                    message = event.get("message")
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        last_assistant = message
                 if event.get("type") == "agent_settled":
                     result["status"] = "settled"
                     result["termination"] = "normal"
+                    if "stopReason" in last_assistant:
+                        result["model_stop_reason"] = last_assistant["stopReason"]
+                    if last_assistant.get("stopReason") == "error":
+                        result["status"] = "run_error"
+                        result["error"] = last_assistant.get("errorMessage") or "Model inference failed."
                     break
+            if game is not None:
+                game.close()
+                if game.limit_reached.is_set():
+                    result["status"] = "action_limit"
             result["elapsed_seconds"] = round(time.monotonic() - start, 3)
             if result["status"] in ("timeout", "loop_detected"):
                 send({"id": "supervisor-abort", "type": "abort"})
@@ -360,6 +392,17 @@ def supervise(
         result["status"] = "interrupted"
         result["termination"] = "forced"
     finally:
+        if game is not None:
+            game.close()
+            if game.limit_reached.is_set():
+                result["status"] = "action_limit"
+                result["termination"] = "forced"
+                if stop_at_limit is not None and not stop_at_limit():
+                    result["immediate_container_stop"] = "failed"
+            elif game.failed.is_set() and result["prompt_submitted_at_utc"]:
+                result["status"] = "run_error"
+                result["termination"] = "forced"
+                result["error"] = "Sokoban game service failed."
         if process:
             if process.poll() is None:
                 if result["termination"] in ("normal", "graceful"):
@@ -380,6 +423,8 @@ def supervise(
                 process.stdout.close()
             result["launcher_exit_code"] = process.returncode
         checked(dll.CloseHandle(job))
+        if game is not None:
+            result["game"] = game.summary()
         result["ended_at_utc"] = utc_now()
         outcome_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
@@ -405,22 +450,39 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
     print(f"Run records: {run_dir}", flush=True)
     name = "long-horizon-" + uuid.uuid4().hex
+    game = None
     try:
         source = WORKSPACE if args.task == "profile" else ROOT / "sokoban_workspace"
-        workspace = container_run.prepare_workspace(source, run_dir)
+        if args.task == "sokoban":
+            workspace = container_run.prepare_workspace(source, run_dir, require_agents=False)
+        else:
+            workspace = container_run.prepare_workspace(source, run_dir)
+        if args.task == "sokoban":
+            (workspace / "output").mkdir()
         assignment = (workspace / "task.prompt").read_text(encoding="utf-8")
         if not assignment.strip():
             raise ValueError("task.prompt is empty.")
+        if args.task == "sokoban":
+            rules_path = workspace / "src" / "sokoban.py"
+            game = SokobanAuthority(run_dir, rules_path)
+            rules_path.unlink()
         model_info = ollama_model.prepare_model(MODEL, CONTEXT_LENGTH)
         model_info["thinking"] = args.thinking == "high"
         model_info["thinking_level"] = args.thinking
+        image_id = network_guard.resolve_image(container_run.IMAGE)
+        model_info["container_image_id"] = image_id
         (run_dir / "model.json").write_text(
             json.dumps(model_info, indent=2) + "\n", encoding="utf-8"
         )
         token = container_run.new_token()
-        guard = network_guard.GatewaySession(
-            name, token, model_info["model_digest"], args.thinking
-        )
+        if game is None:
+            guard = network_guard.GatewaySession(
+                name, token, model_info["model_digest"], args.thinking, image=image_id,
+            )
+        else:
+            guard = network_guard.GatewaySession(
+                name, token, model_info["model_digest"], args.thinking, game=game, image=image_id,
+            )
         guard.start()
     except (
         OSError,
@@ -432,16 +494,29 @@ def main() -> int:
         print(f"Could not prepare isolated run: {exc}", file=sys.stderr)
         return 1
     command = container_run.container_command(
-        workspace, name, guard.network, token, args.thinking
+        workspace, name, guard.network, token, args.thinking, image=image_id,
     )
     print(
         f"Waiting for Pi in Docker; time limit after prompt submission: {args.limit_seconds:g} seconds.",
         flush=True,
     )
+    limit_cleanup = None
+
+    def stop_at_limit() -> bool:
+        nonlocal limit_cleanup
+        limit_cleanup = container_run.cleanup_container(name)
+        return limit_cleanup
+
     try:
-        result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir)
+        if game is None:
+            result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir)
+        else:
+            result = supervise(
+                command, PROMPT + assignment, args.limit_seconds, run_dir,
+                game=game, stop_at_limit=stop_at_limit,
+            )
     finally:
-        agent_cleanup_ok = container_run.cleanup_container(name)
+        agent_cleanup_ok = limit_cleanup is True or container_run.cleanup_container(name)
         gateway_cleanup_ok = guard.close()
     cleanup_ok = agent_cleanup_ok and gateway_cleanup_ok
     if not cleanup_ok:

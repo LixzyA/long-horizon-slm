@@ -83,6 +83,42 @@ def test_model_gateway_only_accepts_thinking_for_the_selected_model() -> None:
     )
 
 
+def test_game_endpoint_accepts_only_authorized_single_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GATEWAY_TOKEN", "token")
+    monkeypatch.setenv("SOKOBAN_ENABLED", "1")
+    calls = []
+    monkeypatch.setattr(gateway, "request_game", lambda action: calls.append(action) or "Remaining: 23")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), gateway.ModelHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/sokoban"
+
+    def request(token: str, body: dict) -> urllib.request.Request:
+        return urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Authorization": "Bearer " + token},
+        )
+
+    try:
+        for token, body, status in [
+            ("wrong", {"action": "up"}, 403),
+            ("token", {"action": "init"}, 400),
+            ("token", {"action": "up", "reset": True}, 400),
+        ]:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request(token, body), timeout=3)
+            assert error.value.code == status
+        with urllib.request.urlopen(request("token", {"action": "up"}), timeout=3) as response:
+            assert response.read() == b"Remaining: 23"
+        assert calls == ["up"]
+        monkeypatch.setenv("SOKOBAN_ENABLED", "0")
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request("token", {"action": "show"}), timeout=3)
+        assert error.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
 @pytest.mark.parametrize("mode", ["high", "off"])
 def test_model_gateway_forwards_only_authorized_thinking_inference(
     monkeypatch: pytest.MonkeyPatch,
@@ -106,6 +142,7 @@ def test_model_gateway_forwards_only_authorized_thinking_inference(
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     monkeypatch.setenv("GATEWAY_TOKEN", "token")
     monkeypatch.setenv("THINKING_MODE", mode)
+    monkeypatch.setenv("MODEL_DIGEST", "recorded-digest")
     monkeypatch.setattr(
         gateway,
         "MODEL_ENDPOINT",
@@ -139,7 +176,7 @@ def test_model_gateway_forwards_only_authorized_thinking_inference(
             request("/v1/chat/completions", "token", valid), timeout=3
         ) as response:
             assert response.read() == b"data: done\n\n"
-        expected = {**valid, "reasoning_effort": "none" if mode == "off" else "high"}
+        expected = {**valid, "model": "recorded-digest", "reasoning_effort": "none" if mode == "off" else "high"}
         assert seen == [("/v1/chat/completions", expected)]
     finally:
         server.shutdown()
@@ -168,11 +205,13 @@ def test_model_ready_requires_exact_context(
     def open_url(request: object, timeout: int):
         url = request.full_url if hasattr(request, "full_url") else request
         value = {}
+        if url.endswith("/api/generate"):
+            assert json.loads(request.data)["model"] == "digest"
         if url.endswith("/api/ps"):
             value = {
                 "models": [
                     {
-                        "name": gateway.MODEL + ":latest",
+                        "name": "another-alias:latest",
                         "digest": "digest",
                         "context_length": context,
                     }
