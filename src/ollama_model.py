@@ -24,25 +24,25 @@ def request_json(
 
 
 def prepare_model(model: str, expected_context: int) -> dict[str, Any]:
-    details = request_json("/api/show", {"model": model})
-    if not {"tools", "thinking"}.issubset(details.get("capabilities", [])):
-        raise RuntimeError("The Ollama model must support both tools and thinking.")
     names = {model, model + ":latest"}
     tags = request_json("/api/tags").get("models", [])
     matches = [item for item in tags if item.get("name") in names]
     if len(matches) != 1 or not matches[0].get("digest"):
         raise RuntimeError("Cannot identify the selected model digest.")
     digest = matches[0]["digest"]
+    details = request_json("/api/show", {"model": digest})
+    if not {"tools", "thinking"}.issubset(details.get("capabilities", [])):
+        raise RuntimeError("The Ollama model must support both tools and thinking.")
     request_json(
         "/api/generate",
-        {"model": model, "prompt": "", "stream": False, "keep_alive": "10m"},
+        {"model": digest, "prompt": "", "stream": False, "keep_alive": "10m"},
         timeout=120,
     )
     running = request_json("/api/ps").get("models", [])
     active = [
         item
         for item in running
-        if item.get("name") in names and item.get("digest") == digest
+        if item.get("digest") == digest
     ]
     if len(active) != 1:
         raise RuntimeError("Cannot verify the loaded Ollama model identity.")

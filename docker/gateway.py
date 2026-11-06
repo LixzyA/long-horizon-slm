@@ -134,7 +134,7 @@ def valid_model_request(body: object, thinking_mode: str = "high") -> bool:
 
 def model_ready() -> bool:
     data = json.dumps(
-        {"model": MODEL, "prompt": "", "stream": False, "keep_alive": "10m"}
+        {"model": os.environ["MODEL_DIGEST"], "prompt": "", "stream": False, "keep_alive": "10m"}
     ).encode("utf-8")
     request = urllib.request.Request(
         OLLAMA + "/api/generate",
@@ -146,8 +146,7 @@ def model_ready() -> bool:
     with urllib.request.urlopen(OLLAMA + "/api/ps", timeout=10) as response:
         models = json.load(response).get("models", [])
     return any(
-        item.get("name") in (MODEL, MODEL + ":latest")
-        and item.get("digest") == os.environ["MODEL_DIGEST"]
+        item.get("digest") == os.environ["MODEL_DIGEST"]
         and isinstance(item.get("context_length"), int)
         and item["context_length"] == 32768
         for item in models
@@ -220,6 +219,7 @@ class ModelHandler(QuietHandler):
                 return
             if thinking_mode == "off":
                 body["reasoning_effort"] = "none"
+            body["model"] = os.environ["MODEL_DIGEST"]
             raw = json.dumps(body).encode("utf-8")
             if not model_ready():
                 self.send_error(503, "Model identity or context could not be verified")
