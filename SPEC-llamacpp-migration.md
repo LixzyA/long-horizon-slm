@@ -1,6 +1,6 @@
 # Specification: migrate experiment inference to llama.cpp
 
-Status: Independently reviewed; authorized by the user for implementation. This document states requirements, not evidence that the migration is implemented.
+Status: Independently reviewed and authorized; implementation and acceptance checks are recorded below. Requirements define the experiment contract; the verification record describes the checks actually run.
 
 ## Objective and scope
 
@@ -29,7 +29,16 @@ The second Ollama blob (`e56a899b...`) is a CLIP vision projector. These experim
 
 The GGUF contains a 7,756-character Jinja chat template with `enable_thinking`. Ollama currently uses its own `qwen3.5` renderer/parser and reports `TEMPLATE {{ .Prompt }}`. That Ollama template is not a replacement for the embedded GGUF template.
 
-No `llama-server` executable was found on PATH. The initial source compatibility target is upstream release `v0.9.0`, commit `cd959bae99ff4bed22bef2604f45241c09bbb8c8`. This target is not yet verified on this machine; the exact Windows CUDA executable must be supplied and smoke-tested before experiment collection. No model downloads or conversion are required by this spec.
+The implementation uses the official Windows CUDA 12.4 build **b12110**, commit `cd959bae99ff4bed22bef2604f45241c09bbb8c8`. It reports `version: 0.9.0-dev (build 12110, commit cd959bae9)`. The installed executable is `C:\Tools\llama.cpp\b12110\llama-server.exe`, with its sibling runtime DLLs. No model download or conversion was needed.
+
+The official release archives were downloaded with normal Windows certificate verification and their published SHA-256 values checked before extraction:
+
+| [Official b12110 release](https://github.com/ggml-org/llama.cpp/releases/tag/b12110) asset | SHA-256 |
+| --- | --- |
+| `llama-b12110-bin-win-cuda-12.4-x64.zip` | `1ce755bc3a061889234048f88e33328e17971eaad73c4666cfeb26026b317fee` |
+| `cudart-llama-bin-win-cuda-12.4-x64.zip` | `8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6` |
+
+Runtime files and model bytes stay outside version control. The small executable loads `llama-server-impl.dll`; protect and hash all sibling DLLs as well as the executable and GGUF during each run.
 
 ## Tech stack and configuration
 
@@ -50,24 +59,24 @@ uv run pytest
 uv run python src/build_image.py
 ```
 
-Proposed commands after implementation; the executable path is an installation example, not a file discovered on this machine:
+Commands for the verified local installation:
 
 ```powershell
 uv run src/supervisor.py --task sokoban --thinking high `
-  --llama-server 'C:\Tools\llama.cpp\llama-server.exe' `
+  --llama-server 'C:\Tools\llama.cpp\b12110\llama-server.exe' `
   --model-file "$env:USERPROFILE\.ollama\models\blobs\sha256-a9d0a3e1d8c91732a3812becd31f8d4a8ff57414903f226306069f0437e2ac50"
 
 uv run src/supervisor.py --task profile --thinking off --limit-seconds 60 `
-  --llama-server 'C:\Tools\llama.cpp\llama-server.exe' `
+  --llama-server 'C:\Tools\llama.cpp\b12110\llama-server.exe' `
   --model-file "$env:USERPROFILE\.ollama\models\blobs\sha256-a9d0a3e1d8c91732a3812becd31f8d4a8ff57414903f226306069f0437e2ac50"
 ```
 
-Proposed opt-in integration verification:
+Opt-in integration verification:
 
 ```powershell
 $env:RUN_LLAMACPP_DOCKER_TEST = '1'
 $env:RUN_SOKOBAN_DOCKER_TEST = '1'
-$env:LLAMACPP_SERVER_EXE = 'C:\Tools\llama.cpp\llama-server.exe'
+$env:LLAMACPP_SERVER_EXE = 'C:\Tools\llama.cpp\b12110\llama-server.exe'
 $env:LLAMACPP_MODEL_FILE = "$env:USERPROFILE\.ollama\models\blobs\sha256-a9d0a3e1d8c91732a3812becd31f8d4a8ff57414903f226306069f0437e2ac50"
 uv run pytest -q tests/test_llamacpp_docker.py tests/test_sokoban_docker.py
 ```
@@ -87,15 +96,16 @@ There is no configured project lint/type-check command; do not invent one or add
    --jinja --reasoning-format deepseek --no-context-shift
    --n-predict 16384 --n-gpu-layers 99
    --cache-type-k f16 --cache-type-v f16 --no-agent --no-ui-mcp-proxy
+   --verbosity 4 --log-colors off --offline
    --temp 1 --top-k 20 --top-p 0.95 --min-p 0
    --repeat-penalty 1.15 --presence-penalty 1.5
    --frequency-penalty 0 --repeat-last-n 64 --seed -1
    --samplers penalties;top_k;top_p;min_p;temperature
    ```
 
-   `99` requests full offload for this model; actual fit/offload is unverified. A memory or context failure must not silently reduce context, quantize caches, or change sampling. An explicit offload adjustment requires documenting and recording the revised launch configuration before running the experiment.
+   `99` requests full offload; the verified runtime offloads all 33/33 layers with the specified 32,768-token context and f16 caches on this GPU. Startup checks the retained offload log; verbosity 4 is required because the default level omits that evidence. A memory or context failure must not silently reduce context, quantize caches, or change sampling. An explicit offload adjustment requires documenting and recording the revised launch configuration before running the experiment.
 5. Generate a distinct per-run backend API key and pass it through `LLAMA_API_KEY` to the server. Give it only to the supervisor and trusted gateway. The agent receives only its existing gateway token. Keys must not appear in retained launch arguments, server logs, prompts, or metadata.
-6. Allow up to 120 seconds for backend readiness, separate from Pi's existing 60-second startup period and the task timer. Poll `/health`, then authenticated `/props` and `/v1/models`. Check owned-process liveness, expected alias/path, `total_slots == 1`, per-slot context exactly 32,768, template identity, and effective sampler values/order. Compare floating-point settings with a documented small tolerance, not exact JSON float equality. Missing or incompatible properties are preparation errors.
+6. Allow up to 120 seconds for backend readiness, separate from hashing/version verification, Pi's existing 60-second startup period, and the task timer. Poll `/health`, then authenticated `/props` and `/v1/models` using one readiness deadline. Check owned-process liveness, expected alias/path, `total_slots == 1`, per-slot context exactly 32,768, template identity, and effective sampler values/order. Compare floats with relative/absolute tolerance `1e-6`. Normalize the server's unsigned seed value `4294967295` to the configured random-seed policy `-1`. Missing or incompatible properties are preparation errors.
 7. `/props` does not supply a cryptographic identity guarantee. Identity comes from verified protected input files, the owned server process, a fresh secret, and cross-checking its reported properties. Monitor the owned process throughout readiness, Pi startup, execution, and shutdown. Unexpected exit stops the run; never reconnect automatically to a replacement process.
 
 Relevant upstream contracts: [pinned server documentation](https://github.com/ggml-org/llama.cpp/blob/cd959bae99ff4bed22bef2604f45241c09bbb8c8/tools/server/README.md), [function calling](https://github.com/ggml-org/llama.cpp/blob/cd959bae99ff4bed22bef2604f45241c09bbb8c8/docs/function-calling.md). These document the endpoints, single-slot/context flags, Jinja tool support, and reasoning fields; live verification remains required.
@@ -120,7 +130,7 @@ Configuration precedence and Windows root lookups are verified against the pinne
 - Own backend preparation and cleanup within the supervisor's existing run lifetime. Setup/probes finish before the prompt starts the task clock. No backend launch failure may start an agent or consume a game action.
 - At action 24, save authoritative state first and immediately stop the agent as today. Also cancel/stop the owned backend so inference cannot continue after the experiment ends. A solution on action 24 still records game outcome `solved` and supervisor status `action_limit`.
 - Preserve freeze-before-summary behavior, pending-save synchronization, save-failure reporting, model-error classification, RPC validation, timeouts, loop detection, and Ctrl+C handling. Cleanup must run even if loading, readiness, gateway startup, or Pi startup fails. Never terminate an unrelated listener or an externally started server.
-- Retain bounded startup/readiness/cleanup waits. Request cancellation must close the upstream stream; failed cooperative shutdown must force-stop the owned process tree. Cleanup failures must be visible in the run record.
+- Retain bounded startup/readiness/cleanup waits. Request cancellation closes the upstream connection even during prompt processing or a quiet stream. Owned native servers are stopped with Windows Job Object termination; there is no authenticated cooperative shutdown endpoint in this runtime contract. First terminate the specific owned bootstrap to prevent it joining an already-terminated empty job. Cleanup failures must be visible in the run record.
 - Keep `game.json`, `sokoban_rules.py`, `events.jsonl`, `outcome.json`, and the exact container image ID. Add retained `llama-server.log` outside the writable workspace. Preserve historical Ollama records without rewriting their fields.
 - New `model.json` records `backend`, record schema version, logical ID, served alias, model SHA-256/size/path, template/hash, llama.cpp version/build/commit when reported, executable SHA-256/path, redacted argv, requested/effective context and slot count, requested/effective sampling chain and values, thinking mapping, GPU/offload configuration, startup timestamps, and container image ID. `seed=-1` records a random-seed policy, not exact trajectory reproducibility. Do not reuse `ollama_version` or an Ollama manifest digest to label llama.cpp artifacts.
 - Backend startup/runtime/cleanup failures need an explicit recorded reason. A provider error followed by `agent_settled` remains `run_error` unless a later successful retry recovers. No silent fallback to Ollama, CPU-only execution, different weights, or a smaller context.
@@ -130,6 +140,7 @@ Configuration precedence and Windows root lookups are verified against the pinne
 | Location | Responsibility in the migration |
 | --- | --- |
 | `src/llamacpp_model.py` | Concrete server launch, protected file identity, authenticated preflight, metadata, and cleanup; reuse current HTTP/error patterns |
+| `src/llamacpp_config.py`, `src/windows_job.py` | Shared fixed backend contract and existing Windows process-control primitives |
 | `src/supervisor.py` | New path arguments, backend lifecycle/monitoring, unchanged task supervision |
 | `src/network_guard.py`, `src/container_run.py` | Backend port/credential wiring and image-pinned probes/containers |
 | `docker/gateway.py`, `docker/entrypoint.sh` | Controlled llama.cpp requests and Pi provider configuration |
@@ -177,7 +188,27 @@ The engine, chat rendering, tool parsing, and sampling implementation can change
 ## Authorization and execution prerequisites
 
 1. The user authorized implementation of this reviewed specification, including supervisor-managed server ownership and reuse of the exact selected text GGUF and sampling settings. No further approval gate is required before implementation within this scope.
-2. Before live verification, supply a Windows CUDA executable matching the pinned source target and record its exact build and hash. Its location is ordinary configuration. The runtime has not been installed or tested; the observed driver/hardware do not prove that a particular CUDA package will work.
-3. Full offload, template tool-call compatibility, and thinking behavior must be verified during implementation. A needed template/offload change must be recorded and brought back for approval if it changes the specified experimental condition.
+2. The pinned Windows CUDA runtime has been installed and its build, archive hashes, full GPU offload, context, template, and effective samplers verified on this machine. Its path is ordinary configuration.
+3. Real Pi tool-call round trips passed with thinking enabled and disabled, using the original embedded template and specified offload settings. No template/offload experimental-condition change was needed. Any future such change still requires documenting and approving the revised condition.
 
-The specification review and implementation authorization are complete. Runtime compatibility, the full test suite, the rebuilt image, and opt-in integration remain acceptance gates; implementation alone does not clear them.
+The specification review and implementation authorization are complete. The verification record below tracks the acceptance gates; implementation alone does not clear them.
+
+## Implementation verification
+
+Implementation date: 2026-11-07. The independent reviewer is GPT-6.1 Sol at xhigh, using Ponytail review. Its spec corrections were incorporated before implementation. Implementation review identified and corrected a bootstrap/job cleanup race, backend-exit status misclassification, quiet-upstream cancellation, inherited HTTP proxy exposure, and lost gateway cleanup ownership after a failed removal. The final review cleared all findings.
+
+Real Pi tests run the bash tool, verify its returned output, receive the following assistant response, and check reasoning blocks in the retained trace for both thinking modes. The Docker game test exercises authoritative action counting and immediate agent/backend shutdown at action 24. These are integration checks, not Sokoban task-performance trials. Old task prompts, puzzle rules, and historical run artifacts remain unchanged.
+
+| Gate | Actual result |
+| --- | --- |
+| Full pytest suite with both opt-in environment gates enabled | **140 passed**, 144.18 seconds, zero skips |
+| Real Pi tool round trip | Passed with thinking `off` and `high`; returned `LLAMACPP_TOOL_OK`, followed by `INTEGRATION_OK` |
+| Backend context/offload/template/sampling | Verified 32,768 tokens, one slot, all 33/33 layers on GPU, original template and selected settings |
+| External configuration isolation | Temporary user/system INI files and inherited overrides ignored; old API key rejected; run key accepted; f16 caches verified |
+| Cancellation | Live single-slot release passed; quiet upstream tested before and after response headers |
+| Shutdown/failures | Backend exit, startup failure, timeouts, Ctrl+C, cleanup failures/retries, and action 24 covered |
+| Rebuilt image | `sha256:d8448588b1ada783951982b0a5218d25f844dd4ee30d3ae40f10d613f837f204` |
+
+Retained acceptance report: `supervisor-runs/llamacpp-acceptance-cbf68211/pytest-normal-temp.xml`; selected live traces/logs are copied to that directory's `normal-temp-traces/`. Protected model/runtime preflight metadata is in `supervisor-runs/llamacpp-preflight-0d4660f6/model.json`. These local artifacts are ignored by Git.
+
+A preceding run with pytest temporary files inside the repository encountered two Windows `WinError 5` atomic-save failures in existing game tests. The passing full suite used pytest's normal temporary directory; those failures were not suppressed or converted to passes. No full gameplay experiment or speed comparison was run.

@@ -15,8 +15,8 @@ import supervisor
 from sokoban_authority import SokobanAuthority
 
 
-@pytest.mark.skipif(os.environ.get("RUN_SOKOBAN_DOCKER_TEST") != "1", reason="requires Docker and Ollama")
-def test_container_game_stops_agent_on_action_24(tmp_path: Path) -> None:
+@pytest.mark.skipif(os.environ.get("RUN_SOKOBAN_DOCKER_TEST") != "1", reason="requires Docker and llama.cpp")
+def test_container_game_stops_agent_on_action_24(tmp_path: Path, llamacpp_backend) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     workspace = container_run.prepare_workspace(
@@ -53,12 +53,15 @@ for line in sys.stdin:
     token = secrets.token_urlsafe(32)
     name = "long-horizon-test-" + uuid.uuid4().hex
     image = network_guard.resolve_image(container_run.IMAGE)
-    guard = network_guard.GatewaySession(name, token, "unused", game=game, image=image)
+    backend = llamacpp_backend
+    guard = network_guard.GatewaySession(name, token, str(backend.model), game=game, backend_token=backend.token, image=image)
 
     def stop_at_limit() -> bool:
         for container in (name, guard.gateway):
             assert network_guard.run_docker(["inspect", "-f", "{{.Image}}", container]).stdout.strip() == image
-        return container_run.cleanup_container(name)
+        removed = container_run.cleanup_container(name)
+        assert backend.close()
+        return removed
 
     try:
         guard.start()
@@ -67,6 +70,7 @@ for line in sys.stdin:
         result = supervisor.supervise(
             command, "test", 60, run_dir, game=game,
             stop_at_limit=stop_at_limit,
+            backend=backend,
         )
         assert result["status"] == "action_limit"
         assert result["termination"] == "forced"

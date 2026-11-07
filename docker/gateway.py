@@ -1,4 +1,5 @@
 import hmac
+import http.client
 import ipaddress
 import json
 import os
@@ -14,9 +15,11 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MODEL = "Qwen3.5-custom-32k"
-OLLAMA = "http://host.docker.internal:11434"
-MODEL_ENDPOINT = OLLAMA + "/v1/chat/completions"
+import llamacpp_config as config
+
+MODEL = config.MODEL
+BACKEND = f"http://host.docker.internal:{config.PORT}"
+MODEL_ENDPOINT = BACKEND + "/v1/chat/completions"
 MODEL_FIELDS = {
     "model",
     "messages",
@@ -127,30 +130,29 @@ def valid_model_request(body: object, thinking_mode: str = "high") -> bool:
     ):
         return False
     effort = body.get("reasoning_effort")
+    max_tokens = body.get("max_tokens", 16384)
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 16384:
+        return False
     if thinking_mode == "off":
         return effort is None or effort == "none"
     return thinking_mode == "high" and effort == "high"
 
 
 def model_ready() -> bool:
-    data = json.dumps(
-        {"model": os.environ["MODEL_DIGEST"], "prompt": "", "stream": False, "keep_alive": "10m"}
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        OLLAMA + "/api/generate",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=120) as response:
-        json.load(response)
-    with urllib.request.urlopen(OLLAMA + "/api/ps", timeout=10) as response:
-        models = json.load(response).get("models", [])
-    return any(
-        item.get("digest") == os.environ["MODEL_DIGEST"]
-        and isinstance(item.get("context_length"), int)
-        and item["context_length"] == 32768
-        for item in models
-    )
+    try:
+        responses = []
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        for path in ("/health", "/props", "/v1/models"):
+            request = urllib.request.Request(BACKEND + path, headers={"Authorization": "Bearer " + os.environ["BACKEND_TOKEN"]})
+            with opener.open(request, timeout=5) as response:
+                responses.append(json.load(response))
+        if not isinstance(responses[0], dict) or responses[0].get("status") != "ok":
+            return False
+        config.validate_properties(responses[1], os.environ["BACKEND_MODEL_PATH"])
+        config.validate_models(responses[2])
+        return True
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        return False
 
 
 def connect_public(host: str, port: int) -> socket.socket:
@@ -191,6 +193,23 @@ class QuietHandler(BaseHTTPRequestHandler):
         pass
 
 
+def cancel_on_disconnect(client: socket.socket, upstream: socket.socket, done: threading.Event) -> None:
+    try:
+        while not done.is_set():
+            readable, _, errors = select.select([client], [], [client], 0.1)
+            if errors or (readable and not client.recv(1, socket.MSG_PEEK)):
+                break
+            if readable:
+                done.wait(0.1)
+    except OSError:
+        pass
+    if not done.is_set():
+        try:
+            upstream.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
 class ModelHandler(QuietHandler):
     def do_POST(self) -> None:
         if self.path == "/sokoban" and os.environ.get("SOKOBAN_ENABLED") == "1":
@@ -219,37 +238,45 @@ class ModelHandler(QuietHandler):
                 return
             if thinking_mode == "off":
                 body["reasoning_effort"] = "none"
-            body["model"] = os.environ["MODEL_DIGEST"]
+            body.update(config.SAMPLING)
+            body["samplers"] = config.SAMPLERS
+            body["model"] = config.ALIAS
+            body["chat_template_kwargs"] = {"enable_thinking": thinking_mode == "high"}
+            body["reasoning_format"] = "deepseek"
             raw = json.dumps(body).encode("utf-8")
             if not model_ready():
                 self.send_error(503, "Model identity or context could not be verified")
                 return
-            request = urllib.request.Request(
-                MODEL_ENDPOINT,
-                data=raw,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=1800) as upstream:
-                self.send_response(upstream.status)
-                self.send_header(
-                    "Content-Type",
-                    upstream.headers.get("Content-Type", "application/json"),
+            endpoint = urllib.parse.urlsplit(MODEL_ENDPOINT)
+            connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=1800)
+            done = threading.Event()
+            watcher = None
+            cancel_socket = None
+            try:
+                connection.request(
+                    "POST", endpoint.path, body=raw,
+                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["BACKEND_TOKEN"]},
                 )
-                self.send_header("Connection", "close")
-                self.end_headers()
-                while chunk := upstream.read1(65536):
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-        except urllib.error.HTTPError as exc:
-            self.send_response(exc.code)
-            self.send_header(
-                "Content-Type", exc.headers.get("Content-Type", "text/plain")
-            )
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(exc.read(65536))
-        except (OSError, ValueError, KeyError, urllib.error.URLError):
+                # HTTPConnection closes its socket wrapper for close-delimited responses.
+                cancel_socket = connection.sock.dup()
+                watcher = threading.Thread(target=cancel_on_disconnect, args=(self.connection, cancel_socket, done), daemon=True)
+                watcher.start()
+                with connection.getresponse() as upstream:
+                    self.send_response(upstream.status)
+                    self.send_header("Content-Type", upstream.headers.get("Content-Type", "application/json"))
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    while chunk := upstream.read1(65536):
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+            finally:
+                done.set()
+                connection.close()
+                if watcher is not None:
+                    watcher.join(timeout=1)
+                if cancel_socket is not None:
+                    cancel_socket.close()
+        except (OSError, ValueError, KeyError, http.client.HTTPException):
             self.close_connection = True
 
     def game_action(self) -> None:

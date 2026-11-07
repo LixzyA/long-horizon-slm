@@ -6,7 +6,7 @@ mkdir -p "$PI_CODING_AGENT_DIR" /workspace/.pi-sessions
 node - <<'JS'
 const fs = require("fs");
 const path = require("path");
-const config = {providers: {ollama: {
+const config = {providers: {llamacpp: {
   api: "openai-completions",
   baseUrl: "http://gateway:8080/v1",
   apiKey: "$MODEL_PROXY_TOKEN",
@@ -14,4 +14,4 @@ const config = {providers: {ollama: {
 }}};
 fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "models.json"), JSON.stringify(config));
 JS
-exec pi --provider ollama --model Qwen3.5-custom-32k --thinking "$THINKING_MODE" --mode rpc --session-dir /workspace/.pi-sessions
+exec pi --provider llamacpp --model Qwen3.5-custom-32k --thinking "$THINKING_MODE" --mode rpc --session-dir /workspace/.pi-sessions

@@ -9,6 +9,7 @@ COPY node_modules /opt/pi/node_modules
 RUN ln -s /opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js /usr/local/bin/pi
 COPY entrypoint.sh /opt/entrypoint.sh
 COPY gateway.py /opt/gateway.py
+COPY llamacpp_config.py /opt/llamacpp_config.py
 USER node
 WORKDIR /workspace
 ENTRYPOINT ["/bin/sh", "/opt/entrypoint.sh"]

@@ -21,6 +21,7 @@ def main() -> int:
         shutil.copy(ROOT / "docker" / "Dockerfile", context)
         shutil.copy(ROOT / "docker" / "entrypoint.sh", context)
         shutil.copy(ROOT / "docker" / "gateway.py", context)
+        shutil.copy(ROOT / "src" / "llamacpp_config.py", context)
         shutil.copytree(PI_MODULES, context / "node_modules")
         return subprocess.call(
             ["docker", "build", "-t", "long-horizon-pi:1.4.0", str(context)]

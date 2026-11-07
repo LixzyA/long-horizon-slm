@@ -221,6 +221,8 @@ class LlamaServer:
         if self.job is not None:
             dll = windows_job.kernel32()
             try:
+                if self.process is not None and self.process.poll() is None:
+                    self.process.kill()
                 windows_job.checked(dll.TerminateJobObject(self.job, 1))
             except OSError:
                 ok = False
