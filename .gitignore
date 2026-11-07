@@ -8,3 +8,4 @@ __pycache__/
 events.jsonl
 supervisor-runs/
 visualizations/
+SPEC*
