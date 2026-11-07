@@ -58,7 +58,7 @@ def test_gateway_and_probe_use_the_pinned_image(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(network_guard, "run_docker", run)
     monkeypatch.setattr(network_guard.subprocess, "Popen", lambda command, **_: commands.append(command) or process)
     monkeypatch.setattr(network_guard.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "true", ""))
-    guard = network_guard.GatewaySession("test", "token", "digest", image=image)
+    guard = network_guard.GatewaySession("test", "token", "C:/model.gguf", backend_token="private", image=image)
     try:
         guard.start()
         launches = [c for c in commands if c[:2] == ["docker", "run"] or c[0] == "run"]
@@ -91,3 +91,26 @@ def test_gateway_exit_or_bad_request_marks_game_failed(tmp_path: Path) -> None:
     network_guard.serve_game_requests(process, game, threading.Event())
     assert game.failed.is_set()
     assert "Actions: 0 / 24" in game.execute("show")
+
+
+def test_failed_startup_cleanup_retains_the_network_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = []
+
+    def run(arguments, timeout=30):
+        if arguments[:2] == ["network", "inspect"]:
+            return subprocess.CompletedProcess(arguments, 0, "[]", "")
+        if arguments[:2] == ["network", "rm"]:
+            attempts.append(arguments)
+            if len(attempts) <= 2:
+                raise RuntimeError("Docker temporarily unavailable")
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(network_guard, "run_docker", run)
+    guard = network_guard.GatewaySession("test", "token", "C:/model.gguf", backend_token="private")
+    with pytest.raises(RuntimeError, match="isolated network"):
+        guard.start()
+    assert guard.network_created and len(attempts) == 1
+    assert not guard.close()
+    assert guard.network_created and len(attempts) == 2
+    assert guard.close()
+    assert not guard.network_created and len(attempts) == 3

@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from sokoban_authority import SokobanAuthority
+from llamacpp_config import PORT
 
 IMAGE = "long-horizon-pi:1.4.0"
 
@@ -21,12 +22,13 @@ for _ in range(30):
     if connects("gateway", 8080) and connects("gateway", 3128): break
     time.sleep(0.2)
 else: raise SystemExit("Gateway did not become ready")
-if connects(host, 11434) or connects("1.1.1.1", 443):
+if connects(host, __BACKEND_PORT__) or connects("1.1.1.1", 443):
     raise SystemExit("Direct network access was not blocked")
-conn = http.client.HTTPConnection("gateway", 8080, timeout=5)
-conn.request("POST", "/api/delete", "{}")
-if conn.getresponse().status != 404: raise SystemExit("Management endpoint was not blocked")
-conn.close()
+for path in ("/props", "/models/load", "/models/unload", "/completion"):
+    conn = http.client.HTTPConnection("gateway", 8080, timeout=5)
+    conn.request("POST", path, "{}", {"Authorization": "Bearer " + os.environ["PROBE_TOKEN"]})
+    if conn.getresponse().status != 404: raise SystemExit("Management endpoint was not blocked")
+    conn.close()
 if os.environ.get("PROBE_SOKOBAN") == "1":
     conn = http.client.HTTPConnection("gateway", 8080, timeout=10)
     conn.request("POST", "/sokoban", json.dumps({"action": "show"}), {
@@ -45,7 +47,7 @@ for target in ("127.0.0.1:443", host + ":443", "[::1]:443"):
         except OSError: reply = b""
         if b" 200 " in reply: raise SystemExit("Private web destination was not blocked")
 print("verified")
-"""
+""".replace("__BACKEND_PORT__", str(PORT))
 
 
 def verify_network_settings(settings: dict[str, Any]) -> bool:
@@ -116,14 +118,15 @@ def serve_game_requests(
 
 class GatewaySession:
     def __init__(
-        self, name: str, token: str, digest: str, thinking_mode: str = "high",
+        self, name: str, token: str, model_path: str, thinking_mode: str = "high",
         game: SokobanAuthority | None = None,
-        *, image: str = IMAGE,
+        *, backend_token: str, image: str = IMAGE,
     ) -> None:
         self.network = name + "-network"
         self.gateway = name + "-gateway"
         self.token = token
-        self.digest = digest
+        self.model_path = model_path
+        self.backend_token = backend_token
         self.thinking_mode = thinking_mode
         self.game = game
         self.image = image
@@ -172,7 +175,9 @@ class GatewaySession:
                     "--env",
                     "GATEWAY_TOKEN=" + self.token,
                     "--env",
-                    "MODEL_DIGEST=" + self.digest,
+                    "BACKEND_MODEL_PATH=" + self.model_path,
+                    "--env",
+                    "BACKEND_TOKEN=" + self.backend_token,
                     "--env",
                     "THINKING_MODE=" + self.thinking_mode,
                     "--env",
@@ -211,7 +216,7 @@ class GatewaySession:
             else:
                 raise RuntimeError("The network gateway did not start.")
             run_docker(["network", "connect", "bridge", self.gateway])
-            command = "import socket,urllib.request; print(socket.gethostbyname('host.docker.internal')); urllib.request.urlopen('http://host.docker.internal:11434/api/tags',timeout=5).close()"
+            command = "import sys,socket; sys.path.insert(0,'/opt'); import gateway; assert gateway.model_ready(), 'Backend identity or settings mismatch'; print(socket.gethostbyname('host.docker.internal'))"
             host = run_docker(
                 ["exec", self.gateway, "python", "-c", command], timeout=15
             ).stdout.strip()
@@ -248,6 +253,7 @@ class GatewaySession:
         ok = True
         self.closing.set()
         if self.process is not None:
+            stopped = True
             try:
                 if self.process.stdin and not self.process.stdin.closed:
                     self.process.stdin.close()
@@ -255,18 +261,23 @@ class GatewaySession:
             except (OSError, subprocess.TimeoutExpired):
                 try:
                     run_docker(["rm", "-f", self.gateway], timeout=15)
+                    self.process.wait(timeout=5)
                 except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                    stopped = False
                     ok = False
-            self.process = None
+            if stopped:
+                self.process = None
         if self.game_reader is not None:
             self.game_reader.join(timeout=5)
             if self.game_reader.is_alive():
                 ok = False
-            self.game_reader = None
+            else:
+                self.game_reader = None
         if self.network_created:
             try:
                 run_docker(["network", "rm", self.network], timeout=15)
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 ok = False
-            self.network_created = False
+            else:
+                self.network_created = False
         return ok

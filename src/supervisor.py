@@ -1,5 +1,4 @@
 import argparse
-import ctypes
 import json
 import math
 import os
@@ -11,20 +10,18 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
-from ctypes import wintypes
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import container_run
+import llamacpp_model
 import network_guard
-import ollama_model
 from sokoban_authority import SokobanAuthority
+from windows_job import bootstrap, checked, create_job, kernel32
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = ROOT / "experiment_workspace"
-MODEL = "Qwen3.5-custom-32k"
-CONTEXT_LENGTH = 32_768
 PROMPT = "Complete the assignment below. Use the current directory as your working directory.\n\n"
 
 
@@ -119,86 +116,6 @@ class LoopDetector:
         return False
 
 
-class BasicLimits(ctypes.Structure):
-    _fields_ = [
-        ("process_time", ctypes.c_longlong),
-        ("job_time", ctypes.c_longlong),
-        ("flags", wintypes.DWORD),
-        ("min_working_set", ctypes.c_size_t),
-        ("max_working_set", ctypes.c_size_t),
-        ("active_process_limit", wintypes.DWORD),
-        ("affinity", ctypes.c_size_t),
-        ("priority_class", wintypes.DWORD),
-        ("scheduling_class", wintypes.DWORD),
-    ]
-
-
-class IoCounters(ctypes.Structure):
-    _fields_ = [
-        (name, ctypes.c_ulonglong)
-        for name in (
-            "read_operations",
-            "write_operations",
-            "other_operations",
-            "read_bytes",
-            "write_bytes",
-            "other_bytes",
-        )
-    ]
-
-
-class ExtendedLimits(ctypes.Structure):
-    _fields_ = [
-        ("basic", BasicLimits),
-        ("io", IoCounters),
-        ("process_memory_limit", ctypes.c_size_t),
-        ("job_memory_limit", ctypes.c_size_t),
-        ("peak_process_memory", ctypes.c_size_t),
-        ("peak_job_memory", ctypes.c_size_t),
-    ]
-
-
-def kernel32() -> Any:
-    dll = ctypes.WinDLL("kernel32", use_last_error=True)
-    dll.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
-    dll.CreateJobObjectW.restype = wintypes.HANDLE
-    dll.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    dll.AssignProcessToJobObject.restype = wintypes.BOOL
-    dll.SetHandleInformation.argtypes = [
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.DWORD,
-    ]
-    dll.SetHandleInformation.restype = wintypes.BOOL
-    dll.CloseHandle.argtypes = [wintypes.HANDLE]
-    dll.CloseHandle.restype = wintypes.BOOL
-    dll.GetCurrentProcess.restype = wintypes.HANDLE
-    dll.SetInformationJobObject.argtypes = [
-        wintypes.HANDLE,
-        ctypes.c_int,
-        ctypes.c_void_p,
-        wintypes.DWORD,
-    ]
-    dll.SetInformationJobObject.restype = wintypes.BOOL
-    dll.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    dll.TerminateJobObject.restype = wintypes.BOOL
-    return dll
-
-
-def checked(result: Any) -> Any:
-    if not result:
-        raise ctypes.WinError(ctypes.get_last_error())
-    return result
-
-
-def bootstrap(handle: str, command: list[str]) -> int:
-    dll = kernel32()
-    handle = wintypes.HANDLE(int(handle))
-    checked(dll.AssignProcessToJobObject(handle, dll.GetCurrentProcess()))
-    checked(dll.CloseHandle(handle))
-    print(json.dumps({"type": "supervisor_bootstrap_ready"}), flush=True)
-    return subprocess.call(command)
-
 
 def supervise(
     command: list[str],
@@ -209,6 +126,7 @@ def supervise(
     startup_seconds: float = 60,
     game: SokobanAuthority | None = None,
     stop_at_limit: Callable[[], bool] | None = None,
+    backend: llamacpp_model.LlamaServer | None = None,
 ) -> dict[str, Any]:
     if not math.isfinite(limit_seconds) or limit_seconds <= 0:
         raise ValueError("Time limit must be a positive finite number.")
@@ -221,12 +139,7 @@ def supervise(
     if events_path.exists() or outcome_path.exists():
         raise FileExistsError("Run directory already contains supervisor records.")
     dll = kernel32()
-    job = checked(dll.CreateJobObjectW(None, None))
-    limits = ExtendedLimits()
-    limits.basic.flags = 0x2000  # Close the job if the supervisor crashes.
-    checked(
-        dll.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits))
-    )
+    job = create_job()
     process = None
     reader = None
     result = {
@@ -275,6 +188,8 @@ def supervise(
 
             def receive(deadline, watch_game=False):
                 while True:
+                    if backend is not None:
+                        backend.check_alive()
                     if watch_game and game is not None:
                         if game.limit_reached.is_set():
                             return {"type": "sokoban_action_limit"}
@@ -284,9 +199,9 @@ def supervise(
                     if remaining <= 0:
                         return None
                     try:
-                        line = pending.get(timeout=min(remaining, 0.1) if watch_game else remaining)
+                        line = pending.get(timeout=min(remaining, 0.1) if watch_game or backend is not None else remaining)
                     except queue.Empty:
-                        if watch_game:
+                        if watch_game or backend is not None:
                             continue
                         return None
                     if line is None:
@@ -364,6 +279,8 @@ def supervise(
                         result["status"] = "run_error"
                         result["error"] = last_assistant.get("errorMessage") or "Model inference failed."
                     break
+            if backend is not None:
+                backend.check_alive()
             if game is not None:
                 game.close()
                 if game.limit_reached.is_set():
@@ -385,8 +302,9 @@ def supervise(
                         result["termination"] = "graceful"
                         break
     except (OSError, RuntimeError) as exc:
-        if result["status"] == "startup_error" and result["prompt_submitted_at_utc"]:
+        if result["prompt_submitted_at_utc"]:
             result["status"] = "run_error"
+        result["termination"] = "forced"
         result["error"] = str(exc)
     except KeyboardInterrupt:
         result["status"] = "interrupted"
@@ -412,6 +330,8 @@ def supervise(
                     except (OSError, subprocess.TimeoutExpired):
                         result["termination"] = "forced"
                 if process.poll() is None:
+                    # The bootstrap may not have joined the job yet.
+                    process.kill()
                     checked(dll.TerminateJobObject(job, 1))
                     process.wait(timeout=grace_seconds)
             checked(dll.TerminateJobObject(job, 1))
@@ -439,24 +359,34 @@ def main() -> int:
     parser.add_argument("--limit-seconds", type=float, default=2700)
     parser.add_argument("--thinking", choices=("high", "off"), default="high")
     parser.add_argument("--task", choices=("profile", "sokoban"), default="profile")
+    parser.add_argument("--llama-server", required=True, type=Path)
+    parser.add_argument("--model-file", required=True, type=Path)
     args = parser.parse_args()
     if not math.isfinite(args.limit_seconds) or args.limit_seconds <= 0:
         parser.error("--limit-seconds must be a positive finite number")
-    run_dir = (
-        ROOT
-        / "supervisor-runs"
-        / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
-    )
+    run_dir = ROOT / "supervisor-runs" / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     run_dir.mkdir(parents=True, exist_ok=False)
     print(f"Run records: {run_dir}", flush=True)
     name = "long-horizon-" + uuid.uuid4().hex
-    game = None
+    game = backend = guard = None
+    agent_launched = False
+    model_info = {}
+    result = {"status": "startup_error", "termination": None, "limit_seconds": args.limit_seconds,
+              "launched_at_utc": utc_now(), "prompt_submitted_at_utc": None}
+    limit_cleanup = limit_backend_cleanup = None
+
+    def stop_at_limit() -> bool:
+        nonlocal limit_cleanup, limit_backend_cleanup
+        limit_cleanup = container_run.cleanup_container(name)
+        try:
+            limit_backend_cleanup = backend.close()
+        except OSError:
+            limit_backend_cleanup = False
+        return limit_cleanup
+
     try:
         source = WORKSPACE if args.task == "profile" else ROOT / "sokoban_workspace"
-        if args.task == "sokoban":
-            workspace = container_run.prepare_workspace(source, run_dir, require_agents=False)
-        else:
-            workspace = container_run.prepare_workspace(source, run_dir)
+        workspace = container_run.prepare_workspace(source, run_dir, require_agents=args.task == "profile")
         if args.task == "sokoban":
             (workspace / "output").mkdir()
         assignment = (workspace / "task.prompt").read_text(encoding="utf-8")
@@ -466,70 +396,58 @@ def main() -> int:
             rules_path = workspace / "src" / "sokoban.py"
             game = SokobanAuthority(run_dir, rules_path)
             rules_path.unlink()
-        model_info = ollama_model.prepare_model(MODEL, CONTEXT_LENGTH)
+        backend = llamacpp_model.LlamaServer(args.llama_server, args.model_file, run_dir)
+        model_info = backend.start()
         model_info["thinking"] = args.thinking == "high"
         model_info["thinking_level"] = args.thinking
+        model_info["thinking_mapping"] = {"enable_thinking": args.thinking == "high"}
         image_id = network_guard.resolve_image(container_run.IMAGE)
         model_info["container_image_id"] = image_id
-        (run_dir / "model.json").write_text(
-            json.dumps(model_info, indent=2) + "\n", encoding="utf-8"
-        )
+        (run_dir / "model.json").write_text(json.dumps(model_info, indent=2) + "\n", encoding="utf-8")
         token = container_run.new_token()
-        if game is None:
-            guard = network_guard.GatewaySession(
-                name, token, model_info["model_digest"], args.thinking, image=image_id,
-            )
-        else:
-            guard = network_guard.GatewaySession(
-                name, token, model_info["model_digest"], args.thinking, game=game, image=image_id,
-            )
+        guard = network_guard.GatewaySession(
+            name, token, str(backend.model), args.thinking, game=game,
+            backend_token=backend.token, image=image_id,
+        )
         guard.start()
-    except (
-        OSError,
-        ValueError,
-        TypeError,
-        RuntimeError,
-        subprocess.SubprocessError,
-    ) as exc:
-        print(f"Could not prepare isolated run: {exc}", file=sys.stderr)
-        return 1
-    command = container_run.container_command(
-        workspace, name, guard.network, token, args.thinking, image=image_id,
-    )
-    print(
-        f"Waiting for Pi in Docker; time limit after prompt submission: {args.limit_seconds:g} seconds.",
-        flush=True,
-    )
-    limit_cleanup = None
-
-    def stop_at_limit() -> bool:
-        nonlocal limit_cleanup
-        limit_cleanup = container_run.cleanup_container(name)
-        return limit_cleanup
-
-    try:
-        if game is None:
-            result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir)
-        else:
-            result = supervise(
-                command, PROMPT + assignment, args.limit_seconds, run_dir,
-                game=game, stop_at_limit=stop_at_limit,
-            )
+        command = container_run.container_command(workspace, name, guard.network, token, args.thinking, image=image_id)
+        print(f"Waiting for Pi in Docker; task time limit: {args.limit_seconds:g} seconds.", flush=True)
+        agent_launched = True
+        result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir,
+                           game=game, stop_at_limit=stop_at_limit, backend=backend)
+    except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+        result["error"] = str(exc)
+        print(f"Experiment failed: {exc}", file=sys.stderr)
+    except KeyboardInterrupt:
+        result.update(status="interrupted", termination="forced")
     finally:
-        agent_cleanup_ok = limit_cleanup is True or container_run.cleanup_container(name)
-        gateway_cleanup_ok = guard.close()
-    cleanup_ok = agent_cleanup_ok and gateway_cleanup_ok
-    if not cleanup_ok:
-        result["container_cleanup"] = "failed"
-        (run_dir / "outcome.json").write_text(
-            json.dumps(result, indent=2) + "\n", encoding="utf-8"
-        )
+        if game is not None:
+            game.close()
+        cleanups = []
+        if agent_launched and limit_cleanup is not True:
+            cleanups.append(("container_cleanup", lambda: container_run.cleanup_container(name)))
+        if backend is not None:
+            cleanups.append(("backend_cleanup", backend.close))
+        if guard is not None:
+            cleanups.append(("gateway_cleanup", guard.close))
+        for label, cleanup in cleanups:
+            try:
+                if not cleanup():
+                    result[label] = "failed"
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                result[label] = "failed"
+        if limit_backend_cleanup is False:
+            result["immediate_backend_stop"] = "failed"
+        if backend is not None:
+            model_info.update(backend.info)
+            model_info["verification_complete"] = "allocated_context" in model_info
+            (run_dir / "model.json").write_text(json.dumps(model_info, indent=2) + "\n", encoding="utf-8")
+        if game is not None:
+            result["game"] = game.summary()
+        result.setdefault("ended_at_utc", utc_now())
+        (run_dir / "outcome.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2), flush=True)
-    if result["status"] == "startup_error":
-        print(
-            "Pi did not start. Check Docker Desktop and the container image.",
-            file=sys.stderr,
-        )
+    cleanup_ok = not any(result.get(key) == "failed" for key in ("container_cleanup", "gateway_cleanup", "backend_cleanup"))
     return 0 if result["status"] == "settled" and cleanup_ok else 1
 
 

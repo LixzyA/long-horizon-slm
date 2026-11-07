@@ -18,6 +18,34 @@ ROOT = Path(__file__).resolve().parents[1]
 FAKE = Path(__file__).with_name("fake_pi.py")
 
 
+
+class FakeBackend:
+    def __init__(self, executable, model, run_dir):
+        self.model = Path("C:/model.gguf")
+        self.token = "private-backend-key"
+        self.closed = False
+        self.info = {"backend": "llama.cpp", "model": "Qwen3.5-custom-32k", "allocated_context": 32768,
+                     "llamacpp_version": "b12110", "model_sha256": "verified-hash"}
+
+    def start(self):
+        return self.info
+
+    def check_alive(self):
+        if self.closed:
+            raise RuntimeError("backend stopped")
+
+    def close(self):
+        self.closed = True
+        return True
+
+
+@pytest.fixture(autouse=True)
+def backend_stub(monkeypatch):
+    monkeypatch.setattr(supervisor.llamacpp_model, "LlamaServer", FakeBackend)
+
+
+BACKEND_ARGS = ["--llama-server", "server.exe", "--model-file", "model.gguf"]
+
 @pytest.fixture
 def pinned_image(monkeypatch: pytest.MonkeyPatch) -> str:
     image_id = "sha256:" + "a" * 64
@@ -68,6 +96,23 @@ def test_model_error_is_recorded_unless_a_retry_recovers(tmp_path: Path, recover
         assert "error" not in result
     else:
         assert result["error"] == "503 model unavailable"
+
+
+@pytest.mark.parametrize("phase", ["startup", "runtime", "settled"])
+def test_owned_backend_exit_stops_supervision(tmp_path: Path, phase: str) -> None:
+    class Backend:
+        def check_alive(self):
+            events = tmp_path / "events.jsonl"
+            marker = '"agent_settled"' if phase == "settled" else '"supervisor-prompt"'
+            if phase == "startup" or (events.exists() and marker in events.read_text(encoding="utf-8")):
+                raise RuntimeError("llama.cpp exited unexpectedly")
+
+    result = supervise([sys.executable, str(FAKE), "complete" if phase == "settled" else "abort"], "test", 3, tmp_path, backend=Backend())
+    assert result["status"] == ("startup_error" if phase == "startup" else "run_error")
+    assert "llama.cpp exited" in result["error"]
+    assert (result["prompt_submitted_at_utc"] is None) == (phase == "startup")
+    assert result["launcher_exit_code"] is not None
+    assert json.loads((tmp_path / "outcome.json").read_text(encoding="utf-8")) == result
 
 
 def test_timeout_requests_abort_before_forced_termination(tmp_path: Path) -> None:
@@ -290,12 +335,11 @@ def test_rejects_invalid_time_limit(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("thinking", ["high", "off"])
-@pytest.mark.parametrize(("cleanup_ok", "expected_code"), [(True, 0), (False, 1)])
+@pytest.mark.parametrize("failed_cleanup", [None, "container_cleanup", "backend_cleanup", "gateway_cleanup"])
 def test_launcher_uses_isolated_container_and_model_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    cleanup_ok: bool,
-    expected_code: int,
+    failed_cleanup: str | None,
     thinking: str,
     pinned_image: str,
 ) -> None:
@@ -303,8 +347,9 @@ def test_launcher_uses_isolated_container_and_model_settings(
     prompts = []
 
     class Guard:
-        def __init__(self, name: str, token: str, digest: str, mode: str, *, image: str) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None) -> None:
             assert mode == thinking
+            assert backend_token == "private-backend-key"
             assert image == pinned_image
             self.network = "verified-network"
 
@@ -312,10 +357,10 @@ def test_launcher_uses_isolated_container_and_model_settings(
             pass
 
         def close(self) -> bool:
-            return True
+            return failed_cleanup != "gateway_cleanup"
 
     def fake_supervise(
-        command: list[str], prompt: str, limit_seconds: float, run_dir: Path
+        command: list[str], prompt: str, limit_seconds: float, run_dir: Path, **kwargs
     ) -> dict:
         assert not (run_dir / "workspace" / "output").exists()
         seen.extend(command)
@@ -325,7 +370,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
     monkeypatch.setattr(supervisor, "supervise", fake_supervise)
 
-    def prepare_workspace(source: Path, run: Path) -> Path:
+    def prepare_workspace(source: Path, run: Path, **kwargs: object) -> Path:
         workspace = run / "workspace"
         workspace.mkdir()
         (workspace / "task.prompt").write_text(
@@ -337,25 +382,21 @@ def test_launcher_uses_isolated_container_and_model_settings(
         supervisor.container_run, "prepare_workspace", prepare_workspace
     )
     monkeypatch.setattr(
-        supervisor.ollama_model,
-        "prepare_model",
-        lambda model, context: {
-            "model": model,
-            "model_digest": "digest",
-            "allocated_context": 32768,
-            "ollama_version": "0.40.13",
-        },
+        supervisor.llamacpp_model.LlamaServer,
+        "start",
+        lambda self: self.info,
     )
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
+    monkeypatch.setattr(FakeBackend, "close", lambda self: failed_cleanup != "backend_cleanup")
     monkeypatch.setattr(
-        supervisor.container_run, "cleanup_container", lambda name: cleanup_ok
+        supervisor.container_run, "cleanup_container", lambda name: failed_cleanup != "container_cleanup"
     )
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--thinking", thinking])
-    assert supervisor.main() == expected_code
-    if not cleanup_ok:
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--thinking", thinking] + BACKEND_ARGS)
+    assert supervisor.main() == (1 if failed_cleanup else 0)
+    if failed_cleanup:
         outcomes = list((tmp_path / "supervisor-runs").glob("*/outcome.json"))
         assert (
-            json.loads(outcomes[0].read_text(encoding="utf-8"))["container_cleanup"]
+            json.loads(outcomes[0].read_text(encoding="utf-8"))[failed_cleanup]
             == "failed"
         )
     assert seen[:2] == ["docker", "run"]
@@ -366,7 +407,9 @@ def test_launcher_uses_isolated_container_and_model_settings(
     model_info = list((tmp_path / "supervisor-runs").glob("*/model.json"))
     recorded = json.loads(model_info[0].read_text(encoding="utf-8"))
     assert recorded["container_image_id"] == pinned_image
-    assert recorded["ollama_version"] == "0.40.13"
+    assert recorded["llamacpp_version"] == "b12110"
+    assert "private-backend-key" not in json.dumps(recorded)
+    assert not any("BACKEND_TOKEN=" in argument for argument in seen)
     assert (
         json.loads(model_info[0].read_text(encoding="utf-8"))["model"] == "Qwen3.5-custom-32k"
     )
@@ -381,7 +424,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
 def test_missing_or_empty_assignment_stops_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None
 ) -> None:
-    def prepare_workspace(source: Path, run: Path) -> Path:
+    def prepare_workspace(source: Path, run: Path, **kwargs: object) -> Path:
         workspace = run / "workspace"
         workspace.mkdir()
         if content is not None:
@@ -393,11 +436,11 @@ def test_missing_or_empty_assignment_stops_before_launch(
         supervisor.container_run, "prepare_workspace", prepare_workspace
     )
     monkeypatch.setattr(
-        supervisor.ollama_model,
-        "prepare_model",
-        lambda model, context: pytest.fail("Ollama must not be contacted"),
+        supervisor.llamacpp_model.LlamaServer,
+        "start",
+        lambda self: pytest.fail("Backend must not start"),
     )
-    monkeypatch.setattr(sys, "argv", ["supervisor.py"])
+    monkeypatch.setattr(sys, "argv", ["supervisor.py"] + BACKEND_ARGS)
     assert supervisor.main() == 1
 
 
@@ -405,13 +448,16 @@ def test_failed_network_verification_stops_before_agent_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str,
 ) -> None:
     class FailedGuard:
-        def __init__(self, name: str, token: str, digest: str, mode: str, *, image: str) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None) -> None:
             pass
 
         def start(self) -> None:
             raise RuntimeError("Network boundary could not be verified")
 
-    def prepare_workspace(source: Path, run: Path) -> Path:
+        def close(self) -> bool:
+            return True
+
+    def prepare_workspace(source: Path, run: Path, **kwargs: object) -> Path:
         workspace = run / "workspace"
         workspace.mkdir()
         (workspace / "task.prompt").write_text("task", encoding="utf-8")
@@ -422,16 +468,64 @@ def test_failed_network_verification_stops_before_agent_launch(
         supervisor.container_run, "prepare_workspace", prepare_workspace
     )
     monkeypatch.setattr(
-        supervisor.ollama_model,
-        "prepare_model",
-        lambda model, context: {"model_digest": "digest"},
+        supervisor.llamacpp_model.LlamaServer,
+        "start",
+        lambda self: self.info,
     )
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", FailedGuard)
     monkeypatch.setattr(
         supervisor, "supervise", lambda *args: pytest.fail("Agent must not start")
     )
-    monkeypatch.setattr(sys, "argv", ["supervisor.py"])
+    monkeypatch.setattr(sys, "argv", ["supervisor.py"] + BACKEND_ARGS)
     assert supervisor.main() == 1
+
+
+@pytest.mark.parametrize("phase", ["backend_startup", "gateway_startup", "execution"])
+def test_interrupt_cleans_up_owned_backend_and_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str, phase: str,
+) -> None:
+    closed = []
+
+    class Backend(FakeBackend):
+        def start(self):
+            if phase == "backend_startup":
+                raise KeyboardInterrupt
+            return self.info
+
+        def close(self):
+            closed.append("backend")
+            return True
+
+    class Guard:
+        def __init__(self, *args, **kwargs):
+            self.network = "network"
+
+        def start(self):
+            if phase == "gateway_startup":
+                raise KeyboardInterrupt
+
+        def close(self):
+            closed.append("gateway")
+            return True
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setattr(supervisor.llamacpp_model, "LlamaServer", Backend)
+    monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
+    monkeypatch.setattr(supervisor, "supervise", interrupt)
+    monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda name: closed.append("agent") or True)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py"] + BACKEND_ARGS)
+    assert supervisor.main() == 1
+    result = json.loads(next((tmp_path / "supervisor-runs").glob("*/outcome.json")).read_text(encoding="utf-8"))
+    assert result["status"] == "interrupted"
+    expected = {"backend"}
+    if phase != "backend_startup":
+        expected.add("gateway")
+    if phase == "execution":
+        expected.add("agent")
+    assert set(closed) == expected
 
 
 def test_event_log_omits_streaming_fragments(tmp_path: Path) -> None:
@@ -559,7 +653,7 @@ def test_task_selects_workspace(
 
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
     monkeypatch.setattr(supervisor.container_run, "prepare_workspace", prepare_workspace)
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", task])
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", task] + BACKEND_ARGS)
     assert supervisor.main() == 1
 
 
@@ -590,8 +684,8 @@ def test_sokoban_output_is_created_before_model_start(
         raise RuntimeError("stop before launch")
 
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
-    monkeypatch.setattr(supervisor.ollama_model, "prepare_model", prepare_model)
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"])
+    monkeypatch.setattr(supervisor.llamacpp_model.LlamaServer, "start", prepare_model)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"] + BACKEND_ARGS)
     assert supervisor.main() == 1
     assert bool(model_started) is not existing_output
     workspace = next((tmp_path / "supervisor-runs").glob("*/workspace"))
@@ -614,7 +708,7 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     seen = {}
 
     class Guard:
-        def __init__(self, name: str, token: str, digest: str, mode: str, game: SokobanAuthority, *, image: str) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, game: SokobanAuthority, *, backend_token: str, image: str) -> None:
             assert image == pinned_image
             self.network = "network"
             seen["game"] = game
@@ -625,7 +719,7 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
         def close(self) -> bool:
             return True
 
-    def fake_supervise(command, prompt, limit_seconds, run_dir, *, game, stop_at_limit):
+    def fake_supervise(command, prompt, limit_seconds, run_dir, *, game, stop_at_limit, backend):
         assert command[-1] == pinned_image
         assert game is seen["game"]
         assert game.path == run_dir / "game.json"
@@ -638,11 +732,11 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
         return {"status": "action_limit"}
 
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
-    monkeypatch.setattr(supervisor.ollama_model, "prepare_model", lambda *_: {"model_digest": "digest"})
+    monkeypatch.setattr(supervisor.llamacpp_model.LlamaServer, "start", lambda self: self.info)
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
     monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda _: True)
     monkeypatch.setattr(supervisor, "supervise", fake_supervise)
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"])
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"] + BACKEND_ARGS)
     assert supervisor.main() == 1
     record = next((tmp_path / "supervisor-runs").glob("*/game.json"))
     assert len(json.loads(record.read_text(encoding="utf-8"))["actions"]) == 24
