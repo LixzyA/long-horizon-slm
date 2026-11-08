@@ -13,12 +13,16 @@ BOARD = (
     "#     #",
     "#######",
 )
+PUZZLE_PATH = Path(__file__).with_name("puzzle.json")
+PUZZLE = json.loads(PUZZLE_PATH.read_text(encoding="utf-8")) if PUZZLE_PATH.exists() else None
+if PUZZLE is not None:
+    BOARD = tuple(PUZZLE["board"])
 DIRECTIONS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 WALLS = {(x, y) for y, row in enumerate(BOARD) for x, cell in enumerate(row) if cell == "#"}
 GOAL = next((x, y) for y, row in enumerate(BOARD) for x, cell in enumerate(row) if cell == ".")
 PLAYER = next((x, y) for y, row in enumerate(BOARD) for x, cell in enumerate(row) if cell == "@")
 BOX = next((x, y) for y, row in enumerate(BOARD) for x, cell in enumerate(row) if cell == "$")
-ACTION_LIMIT = 24
+ACTION_LIMIT = PUZZLE["action_limit"] if PUZZLE is not None else 24
 
 
 def initial_state() -> dict:
@@ -71,6 +75,8 @@ def validate_state(state: object) -> dict:
     actions = state.get("actions")
     if type(limit) is not int or limit <= 0 or not isinstance(actions, list) or len(actions) > limit:
         raise ValueError("invalid state limit or actions")
+    if PUZZLE is not None and limit != ACTION_LIMIT:
+        raise ValueError("state limit does not match the saved puzzle")
     expected = initial_state()
     expected["action_limit"] = limit
     for entry in actions:

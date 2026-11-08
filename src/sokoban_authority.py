@@ -7,16 +7,26 @@ import threading
 from pathlib import Path
 
 GAME_PATH = Path(__file__).resolve().parent.parent / "sokoban_workspace" / "src" / "sokoban.py"
+PUZZLES_PATH = Path(__file__).resolve().parent / "sokoban" / "puzzles.json"
+
+
+def load_puzzle(puzzle_id: str) -> dict:
+    puzzles = json.loads(PUZZLES_PATH.read_text(encoding="utf-8"))
+    return {"id": puzzle_id, **puzzles[puzzle_id]}
 
 
 class SokobanAuthority:
     """Own one game outside the agent's writable workspace."""
 
-    def __init__(self, run_dir: Path, rules_path: Path = GAME_PATH) -> None:
+    def __init__(self, run_dir: Path, rules_path: Path = GAME_PATH, puzzle_id: str | None = None) -> None:
         rules = rules_path.read_bytes()
         snapshot = Path(run_dir) / "sokoban_rules.py"
         with snapshot.open("xb") as file:
             file.write(rules)
+        if puzzle_id is not None:
+            puzzle = load_puzzle(puzzle_id)
+            with (Path(run_dir) / "puzzle.json").open("x", encoding="utf-8") as file:
+                json.dump(puzzle, file, indent=2)
         spec = importlib.util.spec_from_file_location("sokoban_rules", snapshot)
         if spec is None or spec.loader is None:
             raise RuntimeError("Could not load Sokoban rules")

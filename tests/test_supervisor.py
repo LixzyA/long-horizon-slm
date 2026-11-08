@@ -46,6 +46,32 @@ def backend_stub(monkeypatch):
 
 BACKEND_ARGS = ["--llama-server", "server.exe", "--model-file", "model.gguf"]
 
+
+def test_backend_paths_use_local_config_and_allow_overrides(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("llama_server = 'server.exe'\nmodel_file = 'model.gguf'\n", encoding="utf-8")
+    assert supervisor.backend_paths(config, None, None) == (Path("server.exe"), Path("model.gguf"))
+    assert supervisor.backend_paths(config, Path("other.exe"), None) == (Path("other.exe"), Path("model.gguf"))
+    config.write_text("invalid = [", encoding="utf-8")
+    assert supervisor.backend_paths(config, Path("a"), Path("b")) == (Path("a"), Path("b"))
+    with pytest.raises(ValueError, match="Cannot read"):
+        supervisor.backend_paths(config, None, None)
+    config.unlink()
+    with pytest.raises(ValueError, match="llama_server"):
+        supervisor.backend_paths(config, None, None)
+
+
+def test_supervisor_accepts_paths_from_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "config.toml").write_text("llama_server = 'local.exe'\nmodel_file = 'local.gguf'\n", encoding="utf-8")
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py"])
+    def stop_after_parsing(source, run, **kwargs):
+        raise ValueError("configuration parsed")
+    monkeypatch.setattr(supervisor.container_run, "prepare_workspace", stop_after_parsing)
+    assert supervisor.main() == 1
+    outcome = next((tmp_path / "supervisor-runs").glob("*/outcome.json"))
+    assert json.loads(outcome.read_text(encoding="utf-8"))["error"] == "configuration parsed"
+
 @pytest.fixture
 def pinned_image(monkeypatch: pytest.MonkeyPatch) -> str:
     image_id = "sha256:" + "a" * 64
@@ -705,6 +731,9 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     (source / "src").mkdir()
     copied_rules = GAME_PATH.read_text(encoding="utf-8").replace('"#  .  #",', '"#.    #",')
     (source / "src" / "sokoban.py").write_text(copied_rules, encoding="utf-8")
+    monkeypatch.setattr("sokoban_authority.load_puzzle", lambda _: {
+        "id": "baseline", "board": ["#######", "#.    #", "#  @  #", "#  $  #", "#     #", "#     #", "#######"], "action_limit": 24,
+    })
     seen = {}
 
     class Guard:
@@ -740,3 +769,33 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     assert supervisor.main() == 1
     record = next((tmp_path / "supervisor-runs").glob("*/game.json"))
     assert len(json.loads(record.read_text(encoding="utf-8"))["actions"]) == 24
+
+
+def test_selected_puzzle_prompt_and_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str) -> None:
+    import shutil
+    source = tmp_path / "sokoban_workspace"
+    shutil.copytree(ROOT / "sokoban_workspace", source)
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+
+    class Guard:
+        def __init__(self, *args, **kwargs):
+            self.network = "network"
+        def start(self):
+            pass
+        def close(self):
+            return True
+
+    def fake_supervise(command, prompt, limit_seconds, run_dir, *, game, **kwargs):
+        assert "You have 8 actions" in prompt
+        assert "action 8" in prompt and "{ACTION_LIMIT}" not in prompt
+        assert "You have 8 actions" in (run_dir / "workspace" / "task.prompt").read_text(encoding="utf-8")
+        assert "Remaining: 8" in game.execute("show")
+        assert json.loads((run_dir / "puzzle.json").read_text())["id"] == "one-push"
+        assert not (run_dir / "workspace" / "puzzle.json").exists()
+        return {"status": "settled"}
+
+    monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
+    monkeypatch.setattr(supervisor, "supervise", fake_supervise)
+    monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda _: True)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban", "--puzzle", "one-push"] + BACKEND_ARGS)
+    assert supervisor.main() == 0

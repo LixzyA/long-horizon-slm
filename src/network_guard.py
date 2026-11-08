@@ -37,7 +37,8 @@ if os.environ.get("PROBE_SOKOBAN") == "1":
     })
     response = conn.getresponse()
     text = response.read().decode("utf-8")
-    if response.status != 200 or "Actions: 0 / 24" not in text or "Remaining: 24" not in text:
+    limit = os.environ["PROBE_ACTION_LIMIT"]
+    if response.status != 200 or f"Actions: 0 / {limit}" not in text or f"Remaining: {limit}" not in text:
         raise SystemExit("Sokoban game service was not verified")
     conn.close()
 for target in ("127.0.0.1:443", host + ":443", "[::1]:443"):
@@ -228,6 +229,8 @@ class GatewaySession:
                     self.network,
                     "--env",
                     "PROBE_SOKOBAN=" + ("1" if self.game is not None else "0"),
+                    "--env",
+                    "PROBE_ACTION_LIMIT=" + str(self.game.state["action_limit"] if self.game is not None else 0),
                     "--env",
                     "PROBE_TOKEN=" + self.token,
                     "--entrypoint",

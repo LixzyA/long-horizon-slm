@@ -16,14 +16,15 @@ from sokoban_authority import SokobanAuthority
 
 
 @pytest.mark.skipif(os.environ.get("RUN_SOKOBAN_DOCKER_TEST") != "1", reason="requires Docker and llama.cpp")
-def test_container_game_stops_agent_on_action_24(tmp_path: Path, llamacpp_backend) -> None:
+@pytest.mark.parametrize("puzzle_id,limit", [("baseline", 24), ("one-push", 8)])
+def test_container_game_stops_agent_at_limit(tmp_path: Path, llamacpp_backend, puzzle_id: str, limit: int) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     workspace = container_run.prepare_workspace(
         ROOT / "sokoban_workspace", run_dir, require_agents=False
     )
     (workspace / "output").mkdir()
-    game = SokobanAuthority(run_dir, workspace / "src" / "sokoban.py")
+    game = SokobanAuthority(run_dir, workspace / "src" / "sokoban.py", puzzle_id=puzzle_id)
     (workspace / "src" / "sokoban.py").unlink()
     (workspace / "fake_agent.py").write_text(
         '''import json, subprocess, sys
@@ -34,9 +35,9 @@ for line in sys.stdin:
         print(json.dumps({"type": "response", "id": request["id"], "success": True}), flush=True)
     elif request["type"] == "prompt":
         print(json.dumps({"type": "response", "id": request["id"], "success": True}), flush=True)
-        for i in range(24):
+        for i in range(LIMIT):
             result = subprocess.run([sys.executable, "src/play.py", "undo"], capture_output=True, text=True)
-            if i < 23 and (result.returncode or f"Remaining: {23-i}" not in result.stdout):
+            if i < LIMIT-1 and (result.returncode or f"Remaining: {LIMIT-1-i}" not in result.stdout):
                 raise SystemExit(2)
             if i == 2:
                 fake_state = Path("output/game.json")
@@ -45,10 +46,10 @@ for line in sys.stdin:
                 restart = subprocess.run([sys.executable, "src/play.py", "init"], capture_output=True)
                 current = subprocess.run([sys.executable, "src/play.py", "show"], capture_output=True, text=True)
                 history = subprocess.run([sys.executable, "src/play.py", "history"], capture_output=True, text=True)
-                if restart.returncode == 0 or "Actions: 3 / 24" not in current.stdout or json.loads(history.stdout)["remaining"] != 21:
+                if restart.returncode == 0 or f"Actions: 3 / {LIMIT}" not in current.stdout or json.loads(history.stdout)["remaining"] != LIMIT-3:
                     raise SystemExit(3)
         print(json.dumps({"type": "agent_settled"}), flush=True)
-''', encoding="utf-8",
+'''.replace("LIMIT", str(limit)), encoding="utf-8",
     )
     token = secrets.token_urlsafe(32)
     name = "long-horizon-test-" + uuid.uuid4().hex
@@ -74,8 +75,8 @@ for line in sys.stdin:
         )
         assert result["status"] == "action_limit"
         assert result["termination"] == "forced"
-        assert result["game"] == {"outcome": "action_limit_reached", "actions": 24, "limit": 24}
-        assert len(json.loads(game.path.read_text(encoding="utf-8"))["actions"]) == 24
+        assert result["game"] == {"outcome": "action_limit_reached", "actions": limit, "limit": limit}
+        assert len(json.loads(game.path.read_text(encoding="utf-8"))["actions"]) == limit
         assert not (workspace / "output" / "game.json").exists()
     finally:
         container_run.cleanup_container(name)

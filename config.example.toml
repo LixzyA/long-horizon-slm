@@ -1,0 +1,2 @@
+llama_server = 'C:\Tools\llama.cpp\b12110\llama-server.exe'
+model_file = 'C:\Models\Qwen3.5-4B\qwen3.5-4b-q4_k_m.gguf'

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -350,6 +351,25 @@ def supervise(
     return result
 
 
+def backend_paths(config_path: Path, server: Path | None, model: Path | None) -> tuple[Path, Path]:
+    if server is not None and model is not None:
+        return server, model
+    try:
+        with config_path.open("rb") as file:
+            config = tomllib.load(file)
+    except FileNotFoundError:
+        config = {}
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Cannot read {config_path}: {exc}") from exc
+    paths = []
+    for supplied, name in ((server, "llama_server"), (model, "model_file")):
+        value = supplied if supplied is not None else config.get(name)
+        if not isinstance(value, (str, Path)) or not str(value).strip():
+            raise ValueError(f"Set {name} in {config_path} or pass its command-line option")
+        paths.append(Path(value))
+    return paths[0], paths[1]
+
+
 def main() -> int:
     if len(sys.argv) > 2 and sys.argv[1] == "--job-bootstrap":
         return bootstrap(sys.argv[2], sys.argv[3:])
@@ -359,11 +379,18 @@ def main() -> int:
     parser.add_argument("--limit-seconds", type=float, default=2700)
     parser.add_argument("--thinking", choices=("high", "off"), default="high")
     parser.add_argument("--task", choices=("profile", "sokoban"), default="profile")
-    parser.add_argument("--llama-server", required=True, type=Path)
-    parser.add_argument("--model-file", required=True, type=Path)
+    parser.add_argument("--puzzle", choices=("one-push", "align", "baseline", "offset"), default="baseline")
+    parser.add_argument("--llama-server", type=Path, help="Override llama_server in config.toml")
+    parser.add_argument("--model-file", type=Path, help="Override model_file in config.toml")
     args = parser.parse_args()
+    if args.task != "sokoban" and args.puzzle != "baseline":
+        parser.error("--puzzle requires --task sokoban")
     if not math.isfinite(args.limit_seconds) or args.limit_seconds <= 0:
         parser.error("--limit-seconds must be a positive finite number")
+    try:
+        args.llama_server, args.model_file = backend_paths(ROOT / "config.toml", args.llama_server, args.model_file)
+    except ValueError as exc:
+        parser.error(str(exc))
     run_dir = ROOT / "supervisor-runs" / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     run_dir.mkdir(parents=True, exist_ok=False)
     print(f"Run records: {run_dir}", flush=True)
@@ -394,7 +421,9 @@ def main() -> int:
             raise ValueError("task.prompt is empty.")
         if args.task == "sokoban":
             rules_path = workspace / "src" / "sokoban.py"
-            game = SokobanAuthority(run_dir, rules_path)
+            game = SokobanAuthority(run_dir, rules_path, puzzle_id=args.puzzle)
+            assignment = assignment.replace("{ACTION_LIMIT}", str(game.state["action_limit"]))
+            (workspace / "task.prompt").write_text(assignment, encoding="utf-8")
             rules_path.unlink()
         backend = llamacpp_model.LlamaServer(args.llama_server, args.model_file, run_dir)
         model_info = backend.start()
