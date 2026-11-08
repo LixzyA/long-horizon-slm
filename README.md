@@ -136,4 +136,4 @@ $env:LLAMACPP_MODEL_FILE = 'C:\Models\Qwen3.5-4B\qwen3.5-4b-q4_k_m.gguf'
 uv run pytest -q tests/test_llamacpp_docker.py tests/test_sokoban_docker.py
 ```
 
-These checks exercise real Pi tool calls in both thinking modes, stream cancellation, hostile external configuration, network isolation, and authoritative shutdown at action 24. They are integration checks, not model task-performance trials. See [the migration spec](SPEC-llamacpp-migration.md) for the accepted contract and runtime provenance.
+These checks exercise real Pi tool calls in both thinking modes, stream cancellation, hostile external configuration, network isolation, and authoritative shutdown at the selected action limit. They are integration checks, not model task-performance trials.
