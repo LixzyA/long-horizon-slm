@@ -12,7 +12,7 @@ PORT = 8081
 SAMPLERS = ["penalties", "top_k", "top_p", "min_p", "temperature"]
 SAMPLING = {
     "temperature": 1.0, "top_k": 20, "top_p": 0.95, "min_p": 0.0,
-    "repeat_penalty": 1.15, "presence_penalty": 1.5, "frequency_penalty": 0.0,
+    "repeat_penalty": 1.0, "presence_penalty": 1.5, "frequency_penalty": 0.0,
     "repeat_last_n": 64, "seed": -1,
 }
 

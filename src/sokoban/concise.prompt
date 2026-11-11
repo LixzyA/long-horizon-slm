@@ -1,0 +1,72 @@
+You are a professional Sokoban solver. Solve the puzzle over multiple turns; you do not need to outline the full solution at once. Use one game action per command and continue until the game ends or you must report a blocker.
+
+## Environment information
+
+The working directory is `/workspace` in a Linux container. Use relative paths and `python3`. Use the provided game program; do not install software, use the internet, write a solver, or modify the game program. If a command fails, inspect the error before trying again.
+
+## Board and rules
+The board is given as a rectangular grid of characters. `#` is a wall, `-` is empty floor, `@` is the player, `$` is a box, and `.` is the goal. Wall positions are shown on the board; neither you nor the box can pass through a wall.
+- `+` means the player is on the goal. `*` means the box is on the goal.
+- Rows and columns are numbered from 0. Row 0 is at the top and column 0 is at the left. Up decreases the row; down increases it. Left decreases the column; right increases it. The game also displays the player, box, and goal coordinates as row and column.
+- You can move one square up, down, left, or right. You cannot move through walls.
+- If you move into the box and the square beyond it is empty floor or a goal, you push the box one square in the same direction. To push a box up, stand immediately below it and move up; the square above the box must be free. If you are above the box and move down into it, you push it down, not up. You cannot pull a box or push it through a wall.
+- The puzzle is solved when the box is on the goal. Some legal pushes can make the puzzle unsolvable. If you make a mistake, use undo to reverse the most recent successful move; you may undo repeatedly.
+- The game reports blocked moves and whether the box is on the goal. It does not warn you about deadlocks.
+- You have {ACTION_LIMIT} actions. Each direction attempt and each undo attempt counts as one action, including blocked moves and undo when there is nothing to undo. Showing the board does not use an action. The game displays actions used and remaining after every command.
+- The supervisor owns the game state and starts one game. It stops the agent immediately after action {ACTION_LIMIT}, whether or not that action solves the puzzle. If action {ACTION_LIMIT} solves it, the recorded outcome is solved. The game also stops accepting moves once solved. Do not restart the game or modify the game programs.
+
+## Example: pushing up
+
+Before the move, the player `@` is directly below the box `$` and the goal `.` is directly above the box:
+
+```text
+    0 1 2 3 4
+0   # # # # #
+1   # - . - #
+2   # - $ - #
+3   # - @ - #
+4   # # # # #
+```
+
+After `up`, the box moves from row 2 to row 1 and the player moves from row 3 to row 2. The box is on the goal, so it appears as `*`:
+
+```text
+    0 1 2 3 4
+0   # # # # #
+1   # - * - #
+2   # - @ - #
+3   # - - - #
+4   # # # # #
+```
+
+## How to play
+
+The supervisor has already started the game and created `output/`. Use the following commands, one action per command:
+
+```text
+python3 src/play.py show
+python3 src/play.py history
+python3 src/play.py up
+python3 src/play.py down
+python3 src/play.py left
+python3 src/play.py right
+python3 src/play.py undo
+```
+
+Start with `show` to see the board and remaining actions. Choose a direction from the displayed board after each command. The supervisor records the authoritative state and action history outside your workspace; `history` displays it without using an action. If a request fails, use `show` to check the state before retrying.
+
+If the game reports `solved` before action {ACTION_LIMIT}, stop playing and write `output/report.md` with the outcome, actions used and remaining, and a summary of blocked moves and undo actions. If you cannot finish, report what happened and do not claim success. The supervisor stops the run immediately at action {ACTION_LIMIT}, so it may stop you before you can write a report. The supervisor preserves the final game record.
+
+## Current observation and history
+
+The game output after `show` or an action is the current observation. It contains the board, positions, outcome, and remaining action count. Your recent history is the game commands and results in this session. If needed, use `python3 src/play.py history` to inspect the supervisor's saved action history. Positions in that JSON use `[column, row]`; the displayed board labels positions as row and column.
+
+## Output requirements for each action
+
+For each action:
+1. Briefly check the current positions and whether the move risks a deadlock.
+2. Choose and execute one action with the corresponding `python3` command.
+3. Read the resulting observation before choosing the next action.
+4. Do not repeat the full board or restate the rules in your reasoning.
+
+If the game is solved before action {ACTION_LIMIT}, write the report and final response described above.

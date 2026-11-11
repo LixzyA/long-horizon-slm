@@ -9,3 +9,4 @@ events.jsonl
 supervisor-runs/
 visualizations/
 SPEC*
+/config.toml

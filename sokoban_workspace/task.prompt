@@ -12,8 +12,8 @@ The board is given as a rectangular grid of characters. `#` is a wall, `-` is em
 - If you move into the box and the square beyond it is empty floor or a goal, you push the box one square in the same direction. To push a box up, stand immediately below it and move up; the square above the box must be free. If you are above the box and move down into it, you push it down, not up. You cannot pull a box or push it through a wall.
 - The puzzle is solved when the box is on the goal. Some legal pushes can make the puzzle unsolvable. If you make a mistake, use undo to reverse the most recent successful move; you may undo repeatedly.
 - The game reports blocked moves and whether the box is on the goal. It does not warn you about deadlocks.
-- You have 24 actions. Each direction attempt and each undo attempt counts as one action, including blocked moves and undo when there is nothing to undo. Showing the board does not use an action. The game displays actions used and remaining after every command.
-- The supervisor owns the game state and starts one game. It stops the agent immediately after action 24, whether or not that action solves the puzzle. If action 24 solves it, the recorded outcome is solved. The game also stops accepting moves once solved. Do not restart the game or modify the game programs.
+- You have {ACTION_LIMIT} actions. Each direction attempt and each undo attempt counts as one action, including blocked moves and undo when there is nothing to undo. Showing the board does not use an action. The game displays actions used and remaining after every command.
+- The supervisor owns the game state and starts one game. It stops the agent immediately after action {ACTION_LIMIT}, whether or not that action solves the puzzle. If action {ACTION_LIMIT} solves it, the recorded outcome is solved. The game also stops accepting moves once solved. Do not restart the game or modify the game programs.
 
 ## Example: pushing up
 
@@ -55,7 +55,7 @@ python3 src/play.py undo
 
 Start with `show` to see the board and remaining actions. Choose a direction from the displayed board after each command. The supervisor records the authoritative state and action history outside your workspace; `history` displays it without using an action. If a request fails, use `show` to check the state before retrying.
 
-If the game reports `solved` before action 24, stop playing and write `output/report.md` with the outcome, actions used and remaining, and a summary of blocked moves and undo actions. If you cannot finish, report what happened and do not claim success. The supervisor stops the run immediately at action 24, so it may stop you before you can write a report. The supervisor preserves the final game record.
+If the game reports `solved` before action {ACTION_LIMIT}, stop playing and write `output/report.md` with the outcome, actions used and remaining, and a summary of blocked moves and undo actions. If you cannot finish, report what happened and do not claim success. The supervisor stops the run immediately at action {ACTION_LIMIT}, so it may stop you before you can write a report. The supervisor preserves the final game record.
 
 ## Current observation and history
 
@@ -68,4 +68,4 @@ The game output after `show` or an action is the current observation. It contain
 3. Write `ACTION:` followed by a fenced code block containing exactly one of `up`, `down`, `left`, `right`, or `undo`.
 4. Execute that same action using the corresponding `python3` command above. Writing the action in your response does not execute it. Read the resulting observation before choosing the next action.
 
-If the game is solved before action 24, write the report and final response described above.
+If the game is solved before action {ACTION_LIMIT}, write the report and final response described above.

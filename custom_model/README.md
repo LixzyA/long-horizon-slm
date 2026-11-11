@@ -1,0 +1,1 @@
+The Modelfile documents the model and sampling settings. The active supervisor uses llama.cpp and the text GGUF directly; it does not create or query Ollama models. Current setup and launch commands are in the project README.

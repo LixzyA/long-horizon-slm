@@ -68,6 +68,35 @@ def test_gateway_and_probe_use_the_pinned_image(monkeypatch: pytest.MonkeyPatch)
         assert guard.close()
 
 
+def test_huggingface_key_is_inherited_only_by_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = []
+    process = SimpleNamespace(stdin=io.BytesIO(), poll=lambda: None, wait=lambda **_: 0)
+    monkeypatch.setenv("HF_TOKEN", "private-key")
+    def run(arguments, timeout=30):
+        commands.append(arguments)
+        if arguments[:2] == ["network", "inspect"]:
+            output = json.dumps([{
+                "Internal": True, "EnableIPv6": False,
+                "Options": {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
+            }])
+        else:
+            output = "verified" if arguments[0] == "run" else "127.0.0.1"
+        return subprocess.CompletedProcess(arguments, 0, output, "")
+    monkeypatch.setattr(network_guard, "run_docker", run)
+    monkeypatch.setattr(network_guard.subprocess, "Popen", lambda command, **_: commands.append(command) or process)
+    monkeypatch.setattr(network_guard.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "true", ""))
+    guard = network_guard.GatewaySession("test", "agent-token", "", backend_token="", backend_kind="huggingface")
+    try:
+        guard.start()
+        gateway_command = next(c for c in commands if c[:2] == ["docker", "run"])
+        assert gateway_command[gateway_command.index("HF_TOKEN") - 1] == "--env"
+        assert "private-key" not in str(commands)
+        probe_command = next(c for c in commands if c[0] == "run")
+        assert "HF_TOKEN" not in probe_command
+    finally:
+        assert guard.close()
+
+
 def test_game_requests_cross_gateway_stdio_and_update_authority(tmp_path: Path) -> None:
     game = SokobanAuthority(tmp_path)
     request = {"type": "game_request", "id": "abc", "action": "up"}

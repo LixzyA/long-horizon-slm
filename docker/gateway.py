@@ -6,6 +6,7 @@ import os
 import queue
 import select
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -18,6 +19,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import llamacpp_config as config
 
 MODEL = config.MODEL
+OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+HUGGINGFACE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
+HUGGINGFACE_ENDPOINT = "https://router.huggingface.co/v1/chat/completions"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 BACKEND = f"http://host.docker.internal:{config.PORT}"
 MODEL_ENDPOINT = BACKEND + "/v1/chat/completions"
 MODEL_FIELDS = {
@@ -123,13 +128,23 @@ def public_destination(host: str, port: int) -> list[tuple]:
 
 
 def valid_model_request(body: object, thinking_mode: str = "high") -> bool:
+    kind = os.environ.get("BACKEND_KIND", "llamacpp")
+    openrouter = kind == "openrouter"
+    selected_model = OPENROUTER_MODEL if openrouter else HUGGINGFACE_MODEL if kind == "huggingface" else MODEL
+    fields = (MODEL_FIELDS - {"reasoning_effort"}) | {"reasoning"} if openrouter else MODEL_FIELDS
     if (
         not isinstance(body, dict)
-        or body.get("model") != MODEL
-        or not set(body).issubset(MODEL_FIELDS)
+        or body.get("model") != selected_model
+        or not set(body).issubset(fields)
     ):
         return False
-    effort = body.get("reasoning_effort")
+    if openrouter:
+        reasoning = body.get("reasoning")
+        if reasoning != {"effort": "none" if thinking_mode == "off" else "high"}:
+            return False
+        effort = "none" if thinking_mode == "off" else "high"
+    else:
+        effort = body.get("reasoning_effort")
     max_tokens = body.get("max_tokens", 16384)
     if type(max_tokens) is not int or not 1 <= max_tokens <= 16384:
         return False
@@ -138,7 +153,45 @@ def valid_model_request(body: object, thinking_mode: str = "high") -> bool:
     return thinking_mode == "high" and effort == "high"
 
 
+def prepare_model_request(body: dict, thinking_mode: str) -> dict:
+    body = dict(body)
+    kind = os.environ.get("BACKEND_KIND", "llamacpp")
+    if kind in ("openrouter", "huggingface"):
+        body.setdefault("max_tokens", 16384)
+    if kind != "openrouter" and thinking_mode == "off":
+        body["reasoning_effort"] = "none"
+    if kind == "llamacpp":
+        body.update(config.SAMPLING)
+        body["samplers"] = config.SAMPLERS
+        body["model"] = config.ALIAS
+        body["chat_template_kwargs"] = {"enable_thinking": thinking_mode == "high"}
+        body["reasoning_format"] = "deepseek"
+    return body
+
+
 def model_ready() -> bool:
+    if os.environ.get("BACKEND_KIND") == "huggingface":
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            request = urllib.request.Request(
+                "https://huggingface.co/api/whoami-v2",
+                headers={"Authorization": "Bearer " + os.environ["HF_TOKEN"]},
+            )
+            with opener.open(request, timeout=15) as response:
+                return response.status == 200
+        except (OSError, KeyError):
+            return False
+    if os.environ.get("BACKEND_KIND") == "openrouter":
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            request = urllib.request.Request(
+                "https://openrouter.ai/api/v1/key",
+                headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]},
+            )
+            with opener.open(request, timeout=15) as response:
+                return response.status == 200
+        except (OSError, KeyError):
+            return False
     try:
         responses = []
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -236,29 +289,28 @@ class ModelHandler(QuietHandler):
                     400, "Model request does not match the experiment settings"
                 )
                 return
-            if thinking_mode == "off":
-                body["reasoning_effort"] = "none"
-            body.update(config.SAMPLING)
-            body["samplers"] = config.SAMPLERS
-            body["model"] = config.ALIAS
-            body["chat_template_kwargs"] = {"enable_thinking": thinking_mode == "high"}
-            body["reasoning_format"] = "deepseek"
-            raw = json.dumps(body).encode("utf-8")
-            if not model_ready():
+            kind = os.environ.get("BACKEND_KIND", "llamacpp")
+            hosted = kind in ("openrouter", "huggingface")
+            raw = json.dumps(prepare_model_request(body, thinking_mode)).encode("utf-8")
+            if not hosted and not model_ready():
                 self.send_error(503, "Model identity or context could not be verified")
                 return
-            endpoint = urllib.parse.urlsplit(MODEL_ENDPOINT)
-            connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=1800)
+            endpoint = urllib.parse.urlsplit(
+                OPENROUTER_ENDPOINT if kind == "openrouter" else HUGGINGFACE_ENDPOINT if kind == "huggingface" else MODEL_ENDPOINT
+            )
+            connection_type = http.client.HTTPSConnection if hosted else http.client.HTTPConnection
+            connection = connection_type(endpoint.hostname, endpoint.port, timeout=1800)
             done = threading.Event()
             watcher = None
             cancel_socket = None
             try:
                 connection.request(
                     "POST", endpoint.path, body=raw,
-                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["BACKEND_TOKEN"]},
+                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY" if kind == "openrouter" else "HF_TOKEN" if kind == "huggingface" else "BACKEND_TOKEN"]},
                 )
                 # HTTPConnection closes its socket wrapper for close-delimited responses.
-                cancel_socket = connection.sock.dup()
+                cancel_socket = (socket.socket(fileno=os.dup(connection.sock.fileno()))
+                                 if isinstance(connection.sock, ssl.SSLSocket) else connection.sock.dup())
                 watcher = threading.Thread(target=cancel_on_disconnect, args=(self.connection, cancel_socket, done), daemon=True)
                 watcher.start()
                 with connection.getresponse() as upstream:

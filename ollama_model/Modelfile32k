@@ -1,2 +1,0 @@
-FROM Qwen3.5-custom
-PARAMETER num_ctx 32768

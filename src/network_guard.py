@@ -37,7 +37,8 @@ if os.environ.get("PROBE_SOKOBAN") == "1":
     })
     response = conn.getresponse()
     text = response.read().decode("utf-8")
-    if response.status != 200 or "Actions: 0 / 24" not in text or "Remaining: 24" not in text:
+    limit = os.environ["PROBE_ACTION_LIMIT"]
+    if response.status != 200 or f"Actions: 0 / {limit}" not in text or f"Remaining: {limit}" not in text:
         raise SystemExit("Sokoban game service was not verified")
     conn.close()
 for target in ("127.0.0.1:443", host + ":443", "[::1]:443"):
@@ -120,13 +121,14 @@ class GatewaySession:
     def __init__(
         self, name: str, token: str, model_path: str, thinking_mode: str = "high",
         game: SokobanAuthority | None = None,
-        *, backend_token: str, image: str = IMAGE,
+        *, backend_token: str, image: str = IMAGE, backend_kind: str = "llamacpp",
     ) -> None:
         self.network = name + "-network"
         self.gateway = name + "-gateway"
         self.token = token
         self.model_path = model_path
         self.backend_token = backend_token
+        self.backend_kind = backend_kind
         self.thinking_mode = thinking_mode
         self.game = game
         self.image = image
@@ -175,6 +177,10 @@ class GatewaySession:
                     "--env",
                     "GATEWAY_TOKEN=" + self.token,
                     "--env",
+                    "BACKEND_KIND=" + self.backend_kind,
+                    *(["--env", "OPENROUTER_API_KEY"] if self.backend_kind == "openrouter" else
+                      ["--env", "HF_TOKEN"] if self.backend_kind == "huggingface" else []),
+                    "--env",
                     "BACKEND_MODEL_PATH=" + self.model_path,
                     "--env",
                     "BACKEND_TOKEN=" + self.backend_token,
@@ -216,9 +222,9 @@ class GatewaySession:
             else:
                 raise RuntimeError("The network gateway did not start.")
             run_docker(["network", "connect", "bridge", self.gateway])
-            command = "import sys,socket; sys.path.insert(0,'/opt'); import gateway; assert gateway.model_ready(), 'Backend identity or settings mismatch'; print(socket.gethostbyname('host.docker.internal'))"
+            command = "import sys,socket; sys.path.insert(0,'/opt'); import gateway; assert gateway.model_ready(), 'Backend or token check failed'; print(socket.gethostbyname('host.docker.internal'))"
             host = run_docker(
-                ["exec", self.gateway, "python", "-c", command], timeout=15
+                ["exec", self.gateway, "python", "-c", command], timeout=20
             ).stdout.strip()
             result = run_docker(
                 [
@@ -228,6 +234,8 @@ class GatewaySession:
                     self.network,
                     "--env",
                     "PROBE_SOKOBAN=" + ("1" if self.game is not None else "0"),
+                    "--env",
+                    "PROBE_ACTION_LIMIT=" + str(self.game.state["action_limit"] if self.game is not None else 0),
                     "--env",
                     "PROBE_TOKEN=" + self.token,
                     "--entrypoint",

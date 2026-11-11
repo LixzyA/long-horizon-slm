@@ -72,7 +72,7 @@ def server_command(executable: Path, model: Path) -> list[str]:
         "--cache-type-k", "f16", "--cache-type-v", "f16", "--no-agent", "--no-ui-mcp-proxy",
         "--verbosity", "4", "--log-colors", "off", "--offline",
         "--temp", "1", "--top-k", "20", "--top-p", "0.95", "--min-p", "0",
-        "--repeat-penalty", "1.15", "--presence-penalty", "1.5",
+        "--repeat-penalty", str(config.SAMPLING["repeat_penalty"]), "--presence-penalty", "1.5",
         "--frequency-penalty", "0", "--repeat-last-n", "64", "--seed", "-1",
         "--samplers", ";".join(config.SAMPLERS),
     ]

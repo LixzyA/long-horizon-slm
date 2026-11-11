@@ -70,6 +70,7 @@ def test_launch_contract_has_fixed_context_and_no_credentials() -> None:
     args = llamacpp_model.server_command(Path("server.exe"), Path("model.gguf"))
     assert args[args.index("--ctx-size") + 1] == "32768"
     assert args[args.index("--parallel") + 1] == "1"
+    assert args[args.index("--repeat-penalty") + 1] == str(config.SAMPLING["repeat_penalty"]) == "1.0"
     assert "--api-key" not in args
     assert args[args.index("--samplers") + 1] == ";".join(config.SAMPLERS)
 

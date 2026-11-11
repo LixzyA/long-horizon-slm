@@ -7,16 +7,36 @@ import threading
 from pathlib import Path
 
 GAME_PATH = Path(__file__).resolve().parent.parent / "sokoban_workspace" / "src" / "sokoban.py"
+PUZZLES_DIR = Path(__file__).resolve().parent / "sokoban"
+
+
+def load_puzzles() -> dict[str, dict]:
+    puzzles = {}
+    for split in ("train", "validation", "test"):
+        records = json.loads((PUZZLES_DIR / f"puzzles-{split}.json").read_text(encoding="utf-8"))
+        for puzzle_id, puzzle in records.items():
+            if puzzle_id in puzzles or puzzle.get("split") != split:
+                raise ValueError(f"Duplicate or mislabeled puzzle: {puzzle_id}")
+            puzzles[puzzle_id] = puzzle
+    return puzzles
+
+
+def load_puzzle(puzzle_id: str) -> dict:
+    return {"id": puzzle_id, **load_puzzles()[puzzle_id]}
 
 
 class SokobanAuthority:
     """Own one game outside the agent's writable workspace."""
 
-    def __init__(self, run_dir: Path, rules_path: Path = GAME_PATH) -> None:
+    def __init__(self, run_dir: Path, rules_path: Path = GAME_PATH, puzzle_id: str | None = None) -> None:
         rules = rules_path.read_bytes()
         snapshot = Path(run_dir) / "sokoban_rules.py"
         with snapshot.open("xb") as file:
             file.write(rules)
+        if puzzle_id is not None:
+            puzzle = load_puzzle(puzzle_id)
+            with (Path(run_dir) / "puzzle.json").open("x", encoding="utf-8") as file:
+                json.dump(puzzle, file, indent=2)
         spec = importlib.util.spec_from_file_location("sokoban_rules", snapshot)
         if spec is None or spec.loader is None:
             raise RuntimeError("Could not load Sokoban rules")

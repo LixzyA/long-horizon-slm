@@ -23,3 +23,7 @@ Pull requests should:
 - Link the relevant requirement or issue.
 - List the verification performed.
 - Include an API example or screenshot when observable behavior changes.
+
+# Experiment Reports
+
+- For every project experiment report, update `experiment-results/experiment-summary.md` with its findings, conditions, limitations, report link, and run index entries.

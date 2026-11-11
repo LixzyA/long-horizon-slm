@@ -3,10 +3,12 @@ import json
 import math
 import os
 import queue
+import shlex
 import subprocess
 import sys
 import threading
 import time
+import tomllib
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -17,11 +19,10 @@ from typing import Any
 import container_run
 import llamacpp_model
 import network_guard
-from sokoban_authority import SokobanAuthority
+from sokoban_authority import SokobanAuthority, load_puzzles
 from windows_job import bootstrap, checked, create_job, kernel32
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE = ROOT / "experiment_workspace"
 PROMPT = "Complete the assignment below. Use the current directory as your working directory.\n\n"
 
 
@@ -161,7 +162,7 @@ def supervise(
         ]
         process = subprocess.Popen(
             args,
-            cwd=WORKSPACE,
+            cwd=ROOT,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -350,6 +351,54 @@ def supervise(
     return result
 
 
+def backend_paths(config_path: Path, server: Path | None, model: Path | None) -> tuple[Path, Path]:
+    if server is not None and model is not None:
+        return server, model
+    try:
+        with config_path.open("rb") as file:
+            config = tomllib.load(file)
+    except FileNotFoundError:
+        config = {}
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Cannot read {config_path}: {exc}") from exc
+    paths = []
+    for supplied, name in ((server, "llama_server"), (model, "model_file")):
+        value = supplied if supplied is not None else config.get(name)
+        if not isinstance(value, (str, Path)) or not str(value).strip():
+            raise ValueError(f"Set {name} in {config_path} or pass its command-line option")
+        paths.append(Path(value))
+    return paths[0], paths[1]
+
+
+def huggingface_token(path: Path) -> str:
+    value = os.environ.get("HF_TOKEN", "").strip()
+    if not value:
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except FileNotFoundError:
+            return ""
+        except (OSError, UnicodeError) as exc:
+            raise ValueError("Cannot read .env for HF_TOKEN") from exc
+        found = False
+        for line in lines:
+            key, separator, raw = line.partition("=")
+            if not separator or key.strip() != "HF_TOKEN":
+                continue
+            if found:
+                raise ValueError("Duplicate HF_TOKEN in .env")
+            found = True
+            try:
+                parts = shlex.split(raw, comments=True)
+            except ValueError as exc:
+                raise ValueError("Invalid HF_TOKEN in .env") from exc
+            if len(parts) != 1:
+                raise ValueError("Invalid HF_TOKEN in .env")
+            value = parts[0]
+    if any(char.isspace() for char in value):
+        raise ValueError("Invalid HF_TOKEN")
+    return value
+
+
 def main() -> int:
     if len(sys.argv) > 2 and sys.argv[1] == "--job-bootstrap":
         return bootstrap(sys.argv[2], sys.argv[3:])
@@ -357,14 +406,33 @@ def main() -> int:
         description="Run one Pi task with an external wall-clock limit."
     )
     parser.add_argument("--limit-seconds", type=float, default=2700)
+    parser.add_argument("--backend", choices=("llamacpp", "openrouter", "huggingface"), default="llamacpp")
     parser.add_argument("--thinking", choices=("high", "off"), default="high")
-    parser.add_argument("--task", choices=("profile", "sokoban"), default="profile")
-    parser.add_argument("--llama-server", required=True, type=Path)
-    parser.add_argument("--model-file", required=True, type=Path)
+    parser.add_argument("--task", choices=("sokoban",), default="sokoban")
+    parser.add_argument("--puzzle", choices=tuple(load_puzzles()), default="baseline", metavar="ID")
+    parser.add_argument("--sokoban-prompt", choices=("standard", "concise"), default="standard")
+    parser.add_argument("--llama-server", type=Path, help="Override llama_server in config.toml")
+    parser.add_argument("--model-file", type=Path, help="Override model_file in config.toml")
     args = parser.parse_args()
     if not math.isfinite(args.limit_seconds) or args.limit_seconds <= 0:
         parser.error("--limit-seconds must be a positive finite number")
-    run_dir = ROOT / "supervisor-runs" / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
+    if args.backend == "llamacpp":
+        try:
+            args.llama_server, args.model_file = backend_paths(ROOT / "config.toml", args.llama_server, args.model_file)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif args.backend == "huggingface":
+        try:
+            token = huggingface_token(ROOT / ".env")
+        except ValueError as exc:
+            parser.error(str(exc))
+        if not token:
+            parser.error("Set HF_TOKEN in .env or the environment before using Hugging Face")
+        os.environ["HF_TOKEN"] = token
+    elif not os.environ.get("OPENROUTER_API_KEY"):
+        parser.error("Set OPENROUTER_API_KEY before using the OpenRouter backend")
+    run_group = {"llamacpp": "local", "openrouter": "deepseek", "huggingface": "deepseek-huggingface"}[args.backend]
+    run_dir = ROOT / "supervisor-runs" / run_group / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     run_dir.mkdir(parents=True, exist_ok=False)
     print(f"Run records: {run_dir}", flush=True)
     name = "long-horizon-" + uuid.uuid4().hex
@@ -378,39 +446,59 @@ def main() -> int:
     def stop_at_limit() -> bool:
         nonlocal limit_cleanup, limit_backend_cleanup
         limit_cleanup = container_run.cleanup_container(name)
-        try:
-            limit_backend_cleanup = backend.close()
-        except OSError:
-            limit_backend_cleanup = False
+        if backend is not None:
+            try:
+                limit_backend_cleanup = backend.close()
+            except OSError:
+                limit_backend_cleanup = False
         return limit_cleanup
 
     try:
-        source = WORKSPACE if args.task == "profile" else ROOT / "sokoban_workspace"
-        workspace = container_run.prepare_workspace(source, run_dir, require_agents=args.task == "profile")
-        if args.task == "sokoban":
-            (workspace / "output").mkdir()
-        assignment = (workspace / "task.prompt").read_text(encoding="utf-8")
+        source = ROOT / "sokoban_workspace"
+        workspace = container_run.prepare_workspace(source, run_dir, require_agents=False)
+        (workspace / "output").mkdir()
+        prompt_path = (
+            ROOT / "src" / "sokoban" / "concise.prompt"
+            if args.sokoban_prompt == "concise" else workspace / "task.prompt"
+        )
+        assignment = prompt_path.read_text(encoding="utf-8")
         if not assignment.strip():
-            raise ValueError("task.prompt is empty.")
-        if args.task == "sokoban":
-            rules_path = workspace / "src" / "sokoban.py"
-            game = SokobanAuthority(run_dir, rules_path)
-            rules_path.unlink()
-        backend = llamacpp_model.LlamaServer(args.llama_server, args.model_file, run_dir)
-        model_info = backend.start()
+            raise ValueError(f"{prompt_path.name} is empty.")
+        rules_path = workspace / "src" / "sokoban.py"
+        game = SokobanAuthority(run_dir, rules_path, puzzle_id=args.puzzle)
+        assignment = assignment.replace("{ACTION_LIMIT}", str(game.state["action_limit"]))
+        (workspace / "task.prompt").write_text(assignment, encoding="utf-8")
+        rules_path.unlink()
+        if args.backend == "llamacpp":
+            backend = llamacpp_model.LlamaServer(args.llama_server, args.model_file, run_dir)
+            model_info = backend.start()
+        elif args.backend == "openrouter":
+            model_info = {"backend": "OpenRouter", "model": "deepseek/deepseek-v4.1-flash-1017",
+                          "context_window": 1048576, "max_tokens": 16384,
+                          "provider_routing": "OpenRouter default", "sampling": "provider defaults"}
+        else:
+            model_info = {"backend": "Hugging Face", "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                          "context_window": 1048576, "max_tokens": 16384,
+                          "provider_routing": "Hugging Face default (fastest)", "sampling": "provider defaults"}
+        model_info["sokoban_prompt"] = args.sokoban_prompt
         model_info["thinking"] = args.thinking == "high"
         model_info["thinking_level"] = args.thinking
-        model_info["thinking_mapping"] = {"enable_thinking": args.thinking == "high"}
+        if backend is not None:
+            model_info["thinking_mapping"] = {"enable_thinking": args.thinking == "high"}
+        elif args.backend == "huggingface":
+            model_info["thinking_mapping"] = {"reasoning_effort": "none" if args.thinking == "off" else "high"}
+        else:
+            model_info["thinking_mapping"] = {"reasoning": {"effort": "none" if args.thinking == "off" else "high"}}
         image_id = network_guard.resolve_image(container_run.IMAGE)
         model_info["container_image_id"] = image_id
         (run_dir / "model.json").write_text(json.dumps(model_info, indent=2) + "\n", encoding="utf-8")
         token = container_run.new_token()
         guard = network_guard.GatewaySession(
-            name, token, str(backend.model), args.thinking, game=game,
-            backend_token=backend.token, image=image_id,
+            name, token, str(backend.model) if backend else "", args.thinking, game=game,
+            backend_token=backend.token if backend else "", image=image_id, backend_kind=args.backend,
         )
         guard.start()
-        command = container_run.container_command(workspace, name, guard.network, token, args.thinking, image=image_id)
+        command = container_run.container_command(workspace, name, guard.network, token, args.thinking, image=image_id, backend_kind=args.backend)
         print(f"Waiting for Pi in Docker; task time limit: {args.limit_seconds:g} seconds.", flush=True)
         agent_launched = True
         result = supervise(command, PROMPT + assignment, args.limit_seconds, run_dir,

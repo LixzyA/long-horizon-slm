@@ -1,1 +1,0 @@
-These Modelfiles document historical Ollama experiment settings. The active supervisor uses llama.cpp and the existing text GGUF directly; it does not create or query Ollama models. Keep these files as provenance for older runs. Current setup and launch commands are in the project README and SPEC-llamacpp-migration.md.
