@@ -18,6 +18,7 @@ from sokoban_authority import SokobanAuthority, load_puzzle
         ("align", 12, "right up"),
         ("baseline", 24, "left down down right up up"),
         ("offset", 28, "up up left up right right right"),
+        ("detour", 60, "up left left left up left left down down down down right down down left left up right right right down right up up up up"),
     ],
 )
 def test_puzzles_solve_with_shortest_paths_and_replay(tmp_path: Path, puzzle_id: str, limit: int, solution: str) -> None:
@@ -54,7 +55,7 @@ def test_puzzles_solve_with_shortest_paths_and_replay(tmp_path: Path, puzzle_id:
     assert replay.stdout.rstrip() == game.execute("show")
 
 
-@pytest.mark.parametrize("puzzle_id", ["one-push", "align", "baseline", "offset"])
+@pytest.mark.parametrize("puzzle_id", ["one-push", "align", "baseline", "offset", "detour"])
 def test_selected_budget_counts_blocked_and_undo_actions(tmp_path: Path, puzzle_id: str) -> None:
     game = SokobanAuthority(tmp_path, puzzle_id=puzzle_id)
     limit = game.state["action_limit"]
@@ -64,7 +65,7 @@ def test_selected_budget_counts_blocked_and_undo_actions(tmp_path: Path, puzzle_
     assert game.summary() == {"outcome": "action_limit_reached", "actions": limit, "limit": limit}
 
 
-@pytest.mark.parametrize("puzzle_id,solution", [("one-push", "up"), ("align", "right up"), ("baseline", "left down down right up up"), ("offset", "up up left up right right right")])
+@pytest.mark.parametrize("puzzle_id,solution", [("one-push", "up"), ("align", "right up"), ("baseline", "left down down right up up"), ("offset", "up up left up right right right"), ("detour", "up left left left up left left down down down down right down down left left up right right right down right up up up up")])
 def test_solution_on_last_action_is_still_solved(tmp_path: Path, puzzle_id: str, solution: str) -> None:
     game = SokobanAuthority(tmp_path, puzzle_id=puzzle_id)
     actions = solution.split()
@@ -76,9 +77,9 @@ def test_solution_on_last_action_is_still_solved(tmp_path: Path, puzzle_id: str,
     assert game.summary()["outcome"] == "solved"
 
 
-def test_profile_rejects_nondefault_puzzle_before_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_profile_task_is_no_longer_supported(monkeypatch: pytest.MonkeyPatch) -> None:
     import supervisor
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "profile", "--puzzle", "align", "--llama-server", "x", "--model-file", "y"])
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "profile", "--llama-server", "x", "--model-file", "y"])
     with pytest.raises(SystemExit) as error:
         supervisor.main()
     assert error.value.code == 2

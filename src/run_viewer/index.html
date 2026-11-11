@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run Replay · Sokoban Lab</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="replay.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="./index.html" aria-label="Sokoban Lab home"><span class="brand-mark" aria-hidden="true">▦</span><span>SOKOBAN <b>LAB</b></span></a>
+      <span class="top-note"><span class="online-dot"></span> LOCAL REPLAY TOOL</span>
+    </header>
+    <main>
+      <div class="page-heading">
+        <div><p class="eyebrow">EXPERIMENT EXPLORER <span> / </span> 01</p><h1>Run replay<span class="title-dot">.</span></h1><p class="subtitle">Follow the decisions. Find where the path changed.</p></div>
+        <div class="load-actions">
+          <label class="button button-quiet">Choose files<input id="file-input" type="file" accept=".json,.py" multiple></label>
+          <label class="button button-primary"><span aria-hidden="true">↗</span> Open run folder<input id="folder-input" type="file" webkitdirectory multiple></label>
+        </div>
+      </div>
+      <p class="load-help">Choose a run folder, or select <code>game.json</code> with <code>puzzle.json</code> or the saved Sokoban rules file. Files stay on your computer.</p>
+      <div id="notice" class="notice" role="alert" hidden></div>
+      <section class="run-bar" aria-label="Loaded run">
+        <div class="run-identity"><span class="run-icon" aria-hidden="true">◫</span><div><span class="label">CURRENT RUN</span><strong id="run-name">Example replay</strong></div></div>
+        <div class="run-controls"><label id="game-label" hidden>GAME FILE <select id="game-select"></select></label><span id="source-tag" class="source-tag">DEMO</span><button id="demo-button" class="link-button" type="button">Reset to demo</button></div>
+      </section>
+      <section class="metrics" aria-label="Run summary">
+        <div class="metric"><span class="label">FINAL OUTCOME</span><strong id="metric-outcome">—</strong><small id="metric-status">Saved game</small></div>
+        <div class="metric"><span class="label">ACTIONS</span><strong id="metric-actions">—</strong><small>used / limit</small></div>
+        <div class="metric"><span class="label">BLOCKED</span><strong id="metric-blocked">—</strong><small>attempts</small></div>
+        <div class="metric"><span class="label">BOX PUSHES</span><strong id="metric-pushes">—</strong><small>successful pushes</small></div>
+        <div class="metric"><span class="label">UNDO</span><strong id="metric-undo">—</strong><small>attempts</small></div>
+      </section>
+      <div class="workspace">
+        <section class="board-panel" aria-labelledby="board-title">
+          <div class="section-head"><div><p class="eyebrow">01 / BOARD</p><h2 id="board-title">The playing field</h2></div><span id="frame-badge" class="badge">START</span></div>
+          <div class="board-stage"><div class="board-wrap"><div id="board" class="board" role="img" aria-label="Sokoban board"></div></div></div>
+          <div class="legend" aria-label="Board legend"><span><i class="legend-player"></i> Player</span><span><i class="legend-box"></i> Box</span><span><i class="legend-goal"></i> Goal</span><span><i class="legend-wall"></i> Wall</span></div>
+          <div class="transport">
+            <div class="transport-top"><span class="label">PLAYBACK</span><span id="step-label" class="step-label">STEP 0 <span>/ 0</span></span></div>
+            <input id="scrubber" class="scrubber" type="range" min="0" max="0" value="0" aria-label="Replay step">
+            <div class="transport-bottom"><div class="play-controls"><button id="first" class="control" type="button" aria-label="First step">|◀</button><button id="previous" class="control" type="button" aria-label="Previous step">◀</button><button id="play" class="play" type="button" aria-label="Play replay">▶</button><button id="next" class="control" type="button" aria-label="Next step">▶</button><button id="last" class="control" type="button" aria-label="Last step">▶|</button></div><label class="speed">SPEED <select id="speed" aria-label="Playback speed"><option value="1000">1×</option><option value="500" selected>2×</option><option value="250">4×</option></select></label></div>
+          </div>
+        </section>
+        <aside class="timeline-panel" aria-labelledby="timeline-title">
+          <div class="section-head"><div><p class="eyebrow">02 / ACTIONS</p><h2 id="timeline-title">Run timeline</h2></div><span id="timeline-count" class="count-tag">0 MOVES</span></div>
+          <p class="timeline-intro">Select an action to inspect the board at that step.</p>
+          <div class="timeline-header"><span>STEP / ACTION</span><span>RESULT</span></div>
+          <ol id="timeline" class="timeline" aria-label="Action timeline"></ol>
+        </aside>
+      </div>
+      <footer><span>SOKOBAN LAB <span class="footer-sep">/</span> LONG-HORIZON SLM</span><span>Local files. No upload. No changes to your run.</span></footer>
+    </main>
+  </div>
+</body>
+</html>

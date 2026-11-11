@@ -121,13 +121,14 @@ class GatewaySession:
     def __init__(
         self, name: str, token: str, model_path: str, thinking_mode: str = "high",
         game: SokobanAuthority | None = None,
-        *, backend_token: str, image: str = IMAGE,
+        *, backend_token: str, image: str = IMAGE, backend_kind: str = "llamacpp",
     ) -> None:
         self.network = name + "-network"
         self.gateway = name + "-gateway"
         self.token = token
         self.model_path = model_path
         self.backend_token = backend_token
+        self.backend_kind = backend_kind
         self.thinking_mode = thinking_mode
         self.game = game
         self.image = image
@@ -176,6 +177,10 @@ class GatewaySession:
                     "--env",
                     "GATEWAY_TOKEN=" + self.token,
                     "--env",
+                    "BACKEND_KIND=" + self.backend_kind,
+                    *(["--env", "OPENROUTER_API_KEY"] if self.backend_kind == "openrouter" else
+                      ["--env", "HF_TOKEN"] if self.backend_kind == "huggingface" else []),
+                    "--env",
                     "BACKEND_MODEL_PATH=" + self.model_path,
                     "--env",
                     "BACKEND_TOKEN=" + self.backend_token,
@@ -217,9 +222,9 @@ class GatewaySession:
             else:
                 raise RuntimeError("The network gateway did not start.")
             run_docker(["network", "connect", "bridge", self.gateway])
-            command = "import sys,socket; sys.path.insert(0,'/opt'); import gateway; assert gateway.model_ready(), 'Backend identity or settings mismatch'; print(socket.gethostbyname('host.docker.internal'))"
+            command = "import sys,socket; sys.path.insert(0,'/opt'); import gateway; assert gateway.model_ready(), 'Backend or token check failed'; print(socket.gethostbyname('host.docker.internal'))"
             host = run_docker(
-                ["exec", self.gateway, "python", "-c", command], timeout=15
+                ["exec", self.gateway, "python", "-c", command], timeout=20
             ).stdout.strip()
             result = run_docker(
                 [

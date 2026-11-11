@@ -3,7 +3,7 @@ This project researches long horizon tasks on small language models. The active 
 
 # Supervised Pi run
 
-The Windows supervisor runs one Pi task inside a Docker container. It copies the selected workspace into a new run directory and mounts only that copy at `/workspace`. The supervisor reads `task.prompt` from that copy and sends its contents directly to Pi; it also enforces the time limit and detects repeated failed calls. An absent, empty, or unreadable `task.prompt` stops preparation before Pi starts. The original workspace is not modified by the agent.
+The Windows supervisor runs one Pi task inside a Docker container. It copies the selected workspace into a new run directory and mounts only that copy at `/workspace`. By default, the supervisor reads `task.prompt` from that copy and sends its contents directly to Pi. For the concise Sokoban variant, it reads the separate prompt and saves the selected text in the run copy. The supervisor also enforces the time limit and detects repeated failed calls. An absent, empty, or unreadable selected prompt stops preparation before Pi starts. The original workspace is not modified by the agent.
 
 ## Prerequisites
 
@@ -26,28 +26,76 @@ The experiment uses the Qwen3.5 text GGUF with required SHA-256 `a9d0a3e1d8c9173
 Start the supervisor with the default limit of 2,700 seconds (45 minutes):
 
 ```powershell
-uv run src/supervisor.py --task sokoban --puzzle one-push --thinking high
+uv run src/supervisor.py --puzzle one-push --thinking high
 ```
 
 | Option | Description |
 | --- | --- |
 | `--limit-seconds SECONDS` | Set the maximum task time in seconds. The value must be a positive, finite number. The default is `2700`. |
+| `--backend BACKEND` | Select `llamacpp` (default), `openrouter`, or `huggingface`. |
 | `--thinking MODE` | Set the Pi model mode to `high` or `off`. The default is `high`. |
-| `--task TASK` | Select `profile` (default) or `sokoban`. |
-| `--puzzle ID` | Select `one-push`, `align`, `baseline` (default), or `offset` for Sokoban. |
+| `--task TASK` | Select `sokoban` (default). This option remains available for existing commands. |
+| `--puzzle ID` | Select a board ID from the files in `src/sokoban/`. The default is `baseline`. |
+| `--sokoban-prompt VARIANT` | Select `standard` (default) or `concise` for a Sokoban run. |
 | `--llama-server PATH` | Override the configured path to the pinned Windows CUDA server executable. |
 | `--model-file PATH` | Override the configured path to the selected text GGUF. |
 | `-h`, `--help` | Show the command-line help and exit. No task starts. |
 
-The supervisor reads its default paths from the local, Git-ignored `config.toml`. Copy `config.example.toml` to `config.toml` and edit the two paths if needed. Explicit command-line paths override the file. Puzzle boards and budgets are stored in `src/sokoban/puzzles.json`; each run records its selected definition separately. These budgets are pilot choices, and the four puzzles are not a validated difficulty scale.
+The supervisor reads its default paths from the local, Git-ignored `config.toml`. Copy `config.example.toml` to `config.toml` and edit the two paths if needed. Explicit command-line paths override the file. Puzzle boards and budgets are stored in separate split files under `src/sokoban/`; each run records its selected definition separately. These budgets are pilot choices, and the puzzles are not a validated difficulty scale.
+
+## Sokoban board splits
+
+The board files contain 70 one-box boards: [training](src/sokoban/puzzles-train.json) has 30, [validation](src/sokoban/puzzles-validation.json) has 20, and [test](src/sokoban/puzzles-test.json) has 20. Each board also has a `split` field. The five earlier boards belong to `train`. The 65 new IDs are `train-01` through `train-25`, `validation-01` through `validation-20`, and `test-01` through `test-20`. For example:
+
+```powershell
+uv run src/supervisor.py --puzzle train-01 --thinking high
+```
+
+Each new board has a verified shortest solution of 10 to 32 actions. Its action limit is twice that length plus eight. On a shortest route, at least one wrong push can put the box in a non-goal corner. Undo restores the prior state, and the solution then fits within the action limit. The existing five boards keep their original action limits. These budgets and lengths are pilot choices, not a validated difficulty scale.
+
+The board test compares floor layouts across splits under rotations, reflections, and translations. Each pair differs by at least five floor cells under that check. This check cannot rule out every semantic similarity between boards. Keep validation and test boards and their trajectories out of SFT training data. Use only the training file to prepare SFT data. The supervisor reads all three files so that it can select an evaluation board; the files are not an access control. The boards do not themselves provide trajectories or inject mistakes.
+
+To run the concise Sokoban prompt without changing the standard prompt:
+
+```powershell
+uv run src/supervisor.py --puzzle detour --thinking high --sokoban-prompt concise
+```
+
+The concise prompt is `src/sokoban/concise.prompt`. It changes only the per-action instructions. Each Sokoban run saves the selected assignment with the action limit substituted in `workspace/task.prompt` and records the variant in `model.json`. The supervisor also adds its standard preamble before submission. The prompt requests shorter reasoning but does not enforce its length.
 
 For example, set a 60-second task limit:
 
 ```powershell
-uv run src/supervisor.py --task profile --thinking off --limit-seconds 60
+uv run src/supervisor.py --thinking off --limit-seconds 60
 ```
 
 The task timer starts when the supervisor submits the prompt to Pi. It excludes model loading, network verification, and Pi startup. Backend readiness has a 120-second limit; Pi readiness has a separate 60-second limit. Hashing and version verification precede backend readiness. After a task timeout, Pi gets up to five seconds to acknowledge abort. Shutdown and cleanup can add time after the task deadline.
+
+## OpenRouter experiment
+
+To run a board with DeepSeek V4.1 Flash 1017 through OpenRouter, set `OPENROUTER_API_KEY` in the supervisor process environment. Do not put the key in the workspace or command arguments. Rebuild the image after updating the Docker files. Then run:
+
+```powershell
+uv run python src/build_image.py
+uv run src/supervisor.py --backend openrouter --puzzle detour --thinking high
+```
+
+The model ID is `deepseek/deepseek-v4.1-flash-1017`. The agent uses the same board, action limit, task prompt, and deadline. Pi uses a 1,048,576-token context and a 16,384-token response limit for this route. The gateway sends Pi's reasoning setting and uses OpenRouter's default provider selection and sampling. These conditions differ from the local model. The gateway holds the OpenRouter key; the agent receives only a separate gateway token. OpenRouter processes the task, tool outputs, and conversation, and its service can charge for inference. The custom Pi model entry has no pricing data, so its cost estimate is not a billing record. `model.json` records the hosted condition. The gateway checks the key at startup, but it cannot verify the remote model weights or context allocation.
+
+## Hugging Face experiment
+
+This route uses [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/index) and the model `deepseek-ai/DeepSeek-V4.1-Flash`. Add `HF_TOKEN` to the local Git-ignored `.env` file, or set it in the supervisor process environment. The token needs the Hugging Face permission to make calls to Inference Providers. A process environment value takes precedence. The supervisor reads only `HF_TOKEN` from `.env`, and the gateway receives the token without placing it in the agent container or command arguments.
+
+After updating the Docker files, rebuild the image and start a board:
+
+```powershell
+uv run python src/build_image.py
+uv run src/supervisor.py --backend huggingface --puzzle one-push --thinking high
+```
+
+The gateway checks token identity through Hugging Face at startup. That check does not verify inference permissions, credits, model availability, or tool support. The router uses its default provider selection. The agent requests `reasoning_effort` of `high` or `none`, but support and behavior depend on the selected provider. The Pi configuration uses a 1,048,576-token context and a 16,384-token response limit. The remote provider's actual context limit and model weights are not verified. The Pi cost field is not a billing record.
+
+This model is distinct from the earlier OpenRouter `DeepSeek-V4.1-Flash-1017` condition. Hugging Face runs use `supervisor-runs/deepseek-huggingface/`; prior OpenRouter runs remain under `supervisor-runs/deepseek/`. No model request is made until a task starts.
 
 ## Internal option: `--job-bootstrap`
 
@@ -68,13 +116,13 @@ The supervisor supplies these settings to Pi. They are not command-line options 
 | Pi mode | `rpc` | Send the prompt and abort through Pi's RPC interface. |
 | Pi session directory | `workspace/.pi-sessions/` within the run record | Retain Pi session files for this run. |
 
-The default profile assignment remains in `experiment_workspace/task.prompt`. The Sokoban command above selects the separate one-box pilot. Its rules, environment, pushing example, and output instructions are in `sokoban_workspace/task.prompt`; the Sokoban workspace does not require `AGENTS.md`. The supervisor starts one game and owns its state. The `one-push`, `align`, `baseline`, and `offset` puzzles have 8, 12, 24, and 28 actions respectively; direction and undo attempts count even when blocked. `python3 src/play.py show` shows the labeled board, player, box and goal coordinates, remaining actions, and outcome. `python3 src/play.py history` shows the recorded action history. Neither command uses an action. The agent sends each move through `src/play.py`; the supervisor records it outside the agent's workspace and stops the agent and backend immediately when the selected action limit is reached. There is no reset command. The game does not detect deadlocks or inject errors. Edit the appropriate task prompt to change an assignment. The fixed model, context, sampler order, and related settings live in `src/llamacpp_config.py`, shared with the gateway.
+The one-box Sokoban pilot is the default task. Its rules, environment, pushing example, and output instructions are in `sokoban_workspace/task.prompt`; the Sokoban workspace does not require `AGENTS.md`. The supervisor starts one game and owns its state. The `one-push`, `align`, `baseline`, `offset`, and `detour` puzzles have 8, 12, 24, 28, and 60 actions respectively; direction and undo attempts count even when blocked. `python3 src/play.py show` shows the labeled board, player, box and goal coordinates, remaining actions, and outcome. `python3 src/play.py history` shows the recorded action history. Neither command uses an action. The agent sends each move through `src/play.py`; the supervisor records it outside the agent's workspace and stops the agent and backend immediately when the selected action limit is reached. There is no reset command. The game does not detect deadlocks or inject errors. Edit the appropriate task prompt to change an assignment. The fixed model, context, sampler order, and related settings live in `src/llamacpp_config.py`, shared with the gateway.
 
 The container has a read-only root filesystem, a writable temporary directory, and one writable host bind mount: the per-run workspace copy. Linux system files remain visible inside the container. It runs as a non-root user with capabilities dropped. When present, the copied `AGENTS.md` has its original Windows paths replaced with Linux instructions; its run-output rules remain. Links and Windows junctions in the source workspace are rejected before copying.
 
-Each run copies its selected workspace, including any output folders. Changes to the copy are not merged back into the original workspace. The profile workspace uses its own `.run-version` counter; separate run copies can therefore have the same version number. For Sokoban, the supervisor creates an empty `output/` in the run copy before starting the model. If the copied workspace already has `output/`, preparation stops without overwriting it.
+Each run copies its selected workspace, including any output folders. Changes to the copy are not merged back into the original workspace. The supervisor creates an empty `output/` in the run copy before starting the model. If the copied workspace already has `output/`, preparation stops without overwriting it.
 
-Pi runs on a dedicated Docker internal network in isolated gateway mode. Preflight verifies that the agent cannot reach llama.cpp on port 8081 or the public internet directly, that backend management routes are blocked, and that private web destinations are blocked. Only the trusted gateway can reach the backend, using a distinct private API key. The agent gets a separate gateway token. The gateway accepts only the fixed logical model and selected thinking mode, injects the trusted sampling settings and verified server alias, and checks backend health, model properties, template, context, and sampling before each inference request. Backend requests ignore inherited HTTP proxies. Closing a client request cancels its upstream connection even while the backend is quiet. For Sokoban the gateway also relays authenticated game requests and checks that the game service works before the task starts. Isolation failure stops preparation before Pi receives the task.
+Pi runs on a dedicated Docker internal network in isolated gateway mode. Preflight verifies that the agent cannot reach llama.cpp on port 8081 or the public internet directly, that backend management routes are blocked, and that private web destinations are blocked. Only the trusted gateway can reach the backend, using a distinct private API key. The agent gets a separate gateway token. The gateway accepts only the selected model and thinking mode. For llama.cpp, it injects the trusted sampling settings and verified server alias, and checks backend health, model properties, template, context, and sampling before each inference request. Backend requests ignore inherited HTTP proxies. Closing a client request cancels its upstream connection even while the backend is quiet. For Sokoban the gateway also relays authenticated game requests and checks that the game service works before the task starts. Isolation failure stops preparation before Pi receives the task.
 
 The server runs with full GPU offload, f16 key/value caches, Jinja tool formatting, one slot, and no context shifting. The supervisor isolates both Windows llama.cpp configuration roots and clears inherited `LLAMA_*` variables, so user/system INI files and environment defaults cannot silently alter the experiment. Backend exit or configuration mismatch fails the run; there is no fallback. The numeric sampling settings match `custom_model/Modelfile`. Earlier llama.cpp runs used repetition penalty 1.15; the current 1.0 is a different sampling condition. Runtime defaults, template handling, and sampling implementation can also differ. Compare llama.cpp runs as a new backend condition.
 
@@ -96,7 +144,7 @@ The Python function `supervise()` has these parameters. They are not command-lin
 
 ## Records and outcomes
 
-The supervisor prints the record directory at startup. Successful preparation creates `events.jsonl`, `outcome.json`, `model.json`, `llama-server.log`, and the copied `workspace/` under `supervisor-runs/`. Sokoban runs also contain authoritative `game.json`, `puzzle.json`, and `sokoban_rules.py` outside `workspace/`; deleting or editing workspace files does not reset the game. The saved rules are the exact source used by the run. To display a saved state, run `uv run python <run-directory>/sokoban_rules.py --state <run-directory>/game.json show`.
+The supervisor prints the record directory at startup. Local runs use `supervisor-runs/local/`, OpenRouter DeepSeek runs use `supervisor-runs/deepseek/`, and Hugging Face DeepSeek runs use `supervisor-runs/deepseek-huggingface/`. The `supervisor-runs/unclassified/` folder holds older records without enough model metadata. Successful preparation creates `events.jsonl`, `outcome.json`, `model.json`, and the copied `workspace/` under `supervisor-runs/`. Local llama.cpp runs also contain `llama-server.log`. Sokoban runs contain authoritative `game.json`, `puzzle.json`, and `sokoban_rules.py` outside `workspace/`; deleting or editing workspace files does not reset the game. The saved rules are the exact source used by the run. To display a saved state, run `uv run python <run-directory>/sokoban_rules.py --state <run-directory>/game.json show`.
 
 `model.json` records `backend: llama.cpp`, schema version, protected GGUF/runtime hashes and paths, template, llama.cpp build/commit, launch arguments, requested and verified context/sampling, thinking mapping, GPU offload, startup timestamps, backend termination, and `container_image_id`. The seed is random (`-1`), so these records do not promise exact trajectory reproduction. The image ID identifies the build shared by the agent, gateway, and probe. Startup failure still records `outcome.json` and any available backend information; `verification_complete` states whether backend verification finished. Historical Ollama records and Modelfiles are retained with their original meaning.
 
@@ -117,6 +165,10 @@ The supervisor returns `0` for `settled` only when agent, backend, and gateway c
 For Sokoban, `outcome.json` also records the authoritative game outcome, number of actions, and limit in its `game` field. Every shutdown waits for an action already being saved and freezes the game before recording that summary; later requests cannot change the final state. If that pending action reaches the selected action limit, the supervisor records `action_limit` and immediately stops the container. A solution on the final allowed action is recorded as `solved` even though the supervisor status is `action_limit`. Immediate termination can prevent the final action response or the agent's report from being delivered; use the authoritative `game.json` to inspect the final state. `settled` does not mean the puzzle was solved. A timeout can also interrupt the agent before it writes its report.
 
 The loop detector counts only tool results that Pi marks as errors. A successful call or a different tool call resets the count. The supervisor does not enforce the agent's output directory within the copy. It is non-interactive. To steer or resume a session, use Pi separately after the supervisor exits.
+
+## Sokoban replay viewer
+
+Open `src/run_viewer/index.html` in a browser. Choose a run folder, or choose `game.json` together with its `puzzle.json` or saved Sokoban rules file. For older runs, select `workspace/src/sokoban.py` with the game file. The viewer reads files locally, replays actions, and warns when the reconstructed state differs from the saved state. Use the timeline or playback controls to inspect each step. Profile tasks do not contain a Sokoban board and cannot be replayed by this viewer.
 
 ## Tests
 

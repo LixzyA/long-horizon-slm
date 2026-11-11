@@ -1,0 +1,303 @@
+{
+  "validation-01": {
+    "board": [
+      "#########",
+      "##   #  #",
+      "# #   # #",
+      "#  #  # #",
+      "#@. #   #",
+      "#       #",
+      "## #  $ #",
+      "#       #",
+      "#########"
+    ],
+    "action_limit": 52,
+    "split": "validation",
+    "shortest_actions": 22
+  },
+  "validation-02": {
+    "board": [
+      "#########",
+      "# #  ####",
+      "#  @$ # #",
+      "# # # # #",
+      "#    .  #",
+      "# #    ##",
+      "#   #   #",
+      "#########"
+    ],
+    "action_limit": 46,
+    "split": "validation",
+    "shortest_actions": 19
+  },
+  "validation-03": {
+    "board": [
+      "#########",
+      "##      #",
+      "#  $  # #",
+      "# #    ##",
+      "#       #",
+      "#      ##",
+      "##  #. @#",
+      "#########"
+    ],
+    "action_limit": 46,
+    "split": "validation",
+    "shortest_actions": 19
+  },
+  "validation-04": {
+    "board": [
+      "#########",
+      "#    #  #",
+      "#     $ #",
+      "##@.#   #",
+      "#       #",
+      "# ##  # #",
+      "#########"
+    ],
+    "action_limit": 36,
+    "split": "validation",
+    "shortest_actions": 14
+  },
+  "validation-05": {
+    "board": [
+      "#########",
+      "###    ##",
+      "#      ##",
+      "# # @   #",
+      "#  # ## #",
+      "##  $#  #",
+      "#       #",
+      "# . #   #",
+      "#########"
+    ],
+    "action_limit": 42,
+    "split": "validation",
+    "shortest_actions": 17
+  },
+  "validation-06": {
+    "board": [
+      "##########",
+      "# #  @   #",
+      "# .      #",
+      "### #  $##",
+      "#     #  #",
+      "#        #",
+      "#  #     #",
+      "# ## # # #",
+      "##########"
+    ],
+    "action_limit": 46,
+    "split": "validation",
+    "shortest_actions": 19
+  },
+  "validation-07": {
+    "board": [
+      "#########",
+      "#    ## #",
+      "#  #@ $ #",
+      "#       #",
+      "# #  ## #",
+      "# #.    #",
+      "#     # #",
+      "#  #   ##",
+      "#########"
+    ],
+    "action_limit": 58,
+    "split": "validation",
+    "shortest_actions": 25
+  },
+  "validation-08": {
+    "board": [
+      "##########",
+      "#   # # @#",
+      "#  .    ##",
+      "#  # #   #",
+      "#        #",
+      "##  ## $ #",
+      "#    ##  #",
+      "##########"
+    ],
+    "action_limit": 50,
+    "split": "validation",
+    "shortest_actions": 21
+  },
+  "validation-09": {
+    "board": [
+      "########",
+      "#  # # #",
+      "# $   @#",
+      "#    .##",
+      "#  #   #",
+      "#    # #",
+      "########"
+    ],
+    "action_limit": 38,
+    "split": "validation",
+    "shortest_actions": 15
+  },
+  "validation-10": {
+    "board": [
+      "#########",
+      "#. @ $  #",
+      "# # #   #",
+      "#    #  #",
+      "##      #",
+      "##    # #",
+      "#########"
+    ],
+    "action_limit": 30,
+    "split": "validation",
+    "shortest_actions": 11
+  },
+  "validation-11": {
+    "board": [
+      "#########",
+      "#    #  #",
+      "#  #$ # #",
+      "#     # #",
+      "##      #",
+      "#  # @. #",
+      "#     # #",
+      "#########"
+    ],
+    "action_limit": 48,
+    "split": "validation",
+    "shortest_actions": 20
+  },
+  "validation-12": {
+    "board": [
+      "#########",
+      "#     # #",
+      "#    $# #",
+      "#      .#",
+      "### ## ##",
+      "# #  # @#",
+      "#     # #",
+      "#########"
+    ],
+    "action_limit": 34,
+    "split": "validation",
+    "shortest_actions": 13
+  },
+  "validation-13": {
+    "board": [
+      "##########",
+      "##@  ## ##",
+      "#      .##",
+      "## #     #",
+      "#    ##  #",
+      "##       #",
+      "#     $ ##",
+      "#     #  #",
+      "## ####  #",
+      "##########"
+    ],
+    "action_limit": 58,
+    "split": "validation",
+    "shortest_actions": 25
+  },
+  "validation-14": {
+    "board": [
+      "########",
+      "#      #",
+      "# $   ##",
+      "##  . ##",
+      "#@  ## #",
+      "##     #",
+      "########"
+    ],
+    "action_limit": 34,
+    "split": "validation",
+    "shortest_actions": 13
+  },
+  "validation-15": {
+    "board": [
+      "#######",
+      "#    ##",
+      "#  $  #",
+      "#   # #",
+      "## ## #",
+      "#.@   #",
+      "#######"
+    ],
+    "action_limit": 56,
+    "split": "validation",
+    "shortest_actions": 24
+  },
+  "validation-16": {
+    "board": [
+      "#######",
+      "# ##  #",
+      "#  $  #",
+      "#@    #",
+      "#  . ##",
+      "## #  #",
+      "#######"
+    ],
+    "action_limit": 40,
+    "split": "validation",
+    "shortest_actions": 16
+  },
+  "validation-17": {
+    "board": [
+      "########",
+      "##   ###",
+      "## $ # #",
+      "#   #  #",
+      "#. # @ #",
+      "#   #  #",
+      "#     ##",
+      "########"
+    ],
+    "action_limit": 66,
+    "split": "validation",
+    "shortest_actions": 29
+  },
+  "validation-18": {
+    "board": [
+      "##########",
+      "#  #     #",
+      "#   ##   #",
+      "# .#   # #",
+      "##   $ ###",
+      "#@  #    #",
+      "#    # # #",
+      "## #     #",
+      "##########"
+    ],
+    "action_limit": 36,
+    "split": "validation",
+    "shortest_actions": 14
+  },
+  "validation-19": {
+    "board": [
+      "########",
+      "#      #",
+      "##  # ##",
+      "#  #   #",
+      "# $@ # #",
+      "## .   #",
+      "########"
+    ],
+    "action_limit": 68,
+    "split": "validation",
+    "shortest_actions": 30
+  },
+  "validation-20": {
+    "board": [
+      "##########",
+      "#     .  #",
+      "#   ## ###",
+      "##    @  #",
+      "###   #  #",
+      "#   #  $ #",
+      "##       #",
+      "#  #   # #",
+      "##########"
+    ],
+    "action_limit": 54,
+    "split": "validation",
+    "shortest_actions": 23
+  }
+}

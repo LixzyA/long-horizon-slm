@@ -61,6 +61,14 @@ def test_backend_paths_use_local_config_and_allow_overrides(tmp_path: Path) -> N
         supervisor.backend_paths(config, None, None)
 
 
+def test_example_config_is_valid_and_reports_unset_paths() -> None:
+    config = ROOT / "config.example.toml"
+    with pytest.raises(ValueError, match="Set llama_server"):
+        supervisor.backend_paths(config, None, None)
+    with pytest.raises(ValueError, match="Set model_file"):
+        supervisor.backend_paths(config, Path("server.exe"), None)
+
+
 def test_supervisor_accepts_paths_from_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "config.toml").write_text("llama_server = 'local.exe'\nmodel_file = 'local.gguf'\n", encoding="utf-8")
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
@@ -69,7 +77,7 @@ def test_supervisor_accepts_paths_from_config(tmp_path: Path, monkeypatch: pytes
         raise ValueError("configuration parsed")
     monkeypatch.setattr(supervisor.container_run, "prepare_workspace", stop_after_parsing)
     assert supervisor.main() == 1
-    outcome = next((tmp_path / "supervisor-runs").glob("*/outcome.json"))
+    outcome = next((tmp_path / "supervisor-runs").glob("*/*/outcome.json"))
     assert json.loads(outcome.read_text(encoding="utf-8"))["error"] == "configuration parsed"
 
 @pytest.fixture
@@ -94,13 +102,11 @@ def run_case(tmp_path: Path, mode: str, limit: float = 0.35) -> tuple[dict, list
     return result, records
 
 
-def test_starts_agent_in_experiment_workspace(tmp_path: Path) -> None:
+def test_starts_agent_in_project_directory(tmp_path: Path) -> None:
     result, records = run_case(tmp_path, "complete", 3)
     assert result["status"] == "settled"
     cwd = next(r["cwd"] for r in records if r.get("type") == "test_cwd")
-    assert Path(cwd) == ROOT / "experiment_workspace"
-    assert (Path(cwd) / "task.prompt").is_file()
-    assert (Path(cwd) / "AGENTS.md").is_file()
+    assert Path(cwd) == ROOT
 
 
 def test_finished_run_keeps_events_and_reports_completion(tmp_path: Path) -> None:
@@ -373,7 +379,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     prompts = []
 
     class Guard:
-        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None, backend_kind="llamacpp") -> None:
             assert mode == thinking
             assert backend_token == "private-backend-key"
             assert image == pinned_image
@@ -388,7 +394,8 @@ def test_launcher_uses_isolated_container_and_model_settings(
     def fake_supervise(
         command: list[str], prompt: str, limit_seconds: float, run_dir: Path, **kwargs
     ) -> dict:
-        assert not (run_dir / "workspace" / "output").exists()
+        assert (run_dir / "workspace" / "output").is_dir()
+        assert run_dir.parent.name == "local"
         seen.extend(command)
         prompts.append(prompt)
         return {"status": "settled"}
@@ -400,8 +407,10 @@ def test_launcher_uses_isolated_container_and_model_settings(
         workspace = run / "workspace"
         workspace.mkdir()
         (workspace / "task.prompt").write_text(
-            "Assignment content: build the profile.", encoding="utf-8"
+            "Assignment content: solve Sokoban.", encoding="utf-8"
         )
+        (workspace / "src").mkdir()
+        (workspace / "src" / "sokoban.py").write_bytes(GAME_PATH.read_bytes())
         return workspace
 
     monkeypatch.setattr(
@@ -420,7 +429,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     monkeypatch.setattr(sys, "argv", ["supervisor.py", "--thinking", thinking] + BACKEND_ARGS)
     assert supervisor.main() == (1 if failed_cleanup else 0)
     if failed_cleanup:
-        outcomes = list((tmp_path / "supervisor-runs").glob("*/outcome.json"))
+        outcomes = list((tmp_path / "supervisor-runs").glob("*/*/outcome.json"))
         assert (
             json.loads(outcomes[0].read_text(encoding="utf-8"))[failed_cleanup]
             == "failed"
@@ -430,7 +439,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     assert "verified-network" in seen
     assert f"THINKING_MODE={thinking}" in seen
     assert not any("PI_REPETITION" in value for value in seen)
-    model_info = list((tmp_path / "supervisor-runs").glob("*/model.json"))
+    model_info = list((tmp_path / "supervisor-runs").glob("*/*/model.json"))
     recorded = json.loads(model_info[0].read_text(encoding="utf-8"))
     assert recorded["container_image_id"] == pinned_image
     assert recorded["llamacpp_version"] == "b12110"
@@ -442,7 +451,7 @@ def test_launcher_uses_isolated_container_and_model_settings(
     assert json.loads(model_info[0].read_text(encoding="utf-8"))["thinking"] is (
         thinking == "high"
     )
-    assert "Assignment content: build the profile." in prompts[0]
+    assert "Assignment content: solve Sokoban." in prompts[0]
     assert "Read task.prompt" not in prompts[0]
 
 
@@ -474,7 +483,7 @@ def test_failed_network_verification_stops_before_agent_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str,
 ) -> None:
     class FailedGuard:
-        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, *, backend_token: str, image: str, game=None, backend_kind="llamacpp") -> None:
             pass
 
         def start(self) -> None:
@@ -487,6 +496,8 @@ def test_failed_network_verification_stops_before_agent_launch(
         workspace = run / "workspace"
         workspace.mkdir()
         (workspace / "task.prompt").write_text("task", encoding="utf-8")
+        (workspace / "src").mkdir()
+        (workspace / "src" / "sokoban.py").write_bytes(GAME_PATH.read_bytes())
         return workspace
 
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
@@ -537,6 +548,8 @@ def test_interrupt_cleans_up_owned_backend_and_gateway(
     def interrupt(*args, **kwargs):
         raise KeyboardInterrupt
 
+    import shutil
+    shutil.copytree(ROOT / "sokoban_workspace", tmp_path / "sokoban_workspace")
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
     monkeypatch.setattr(supervisor.llamacpp_model, "LlamaServer", Backend)
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
@@ -544,7 +557,7 @@ def test_interrupt_cleans_up_owned_backend_and_gateway(
     monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda name: closed.append("agent") or True)
     monkeypatch.setattr(sys, "argv", ["supervisor.py"] + BACKEND_ARGS)
     assert supervisor.main() == 1
-    result = json.loads(next((tmp_path / "supervisor-runs").glob("*/outcome.json")).read_text(encoding="utf-8"))
+    result = json.loads(next((tmp_path / "supervisor-runs").glob("*/*/outcome.json")).read_text(encoding="utf-8"))
     assert result["status"] == "interrupted"
     expected = {"backend"}
     if phase != "backend_startup":
@@ -666,20 +679,17 @@ def test_each_condition_independently_resets_streak(
     assert call("trigger", "bash", {"command": "bad"}, True)
 
 
-@pytest.mark.parametrize(
-    ("task", "expected"),
-    [("profile", "experiment_workspace"), ("sokoban", "sokoban_workspace")],
-)
-def test_task_selects_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str, expected: str
+@pytest.mark.parametrize("task_flag", [[], ["--task", "sokoban"]])
+def test_task_selects_sokoban_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task_flag: list[str]
 ) -> None:
     def prepare_workspace(source: Path, run: Path, **kwargs: object) -> Path:
-        assert source.name == expected
+        assert source == tmp_path / "sokoban_workspace"
         raise ValueError("stop before launch")
 
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
     monkeypatch.setattr(supervisor.container_run, "prepare_workspace", prepare_workspace)
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", task] + BACKEND_ARGS)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py"] + task_flag + BACKEND_ARGS)
     assert supervisor.main() == 1
 
 
@@ -699,7 +709,7 @@ def test_sokoban_output_is_created_before_model_start(
     model_started = []
 
     def prepare_model(*args: object) -> dict:
-        workspace = next((tmp_path / "supervisor-runs").glob("*/workspace"))
+        workspace = next((tmp_path / "supervisor-runs").glob("*/*/workspace"))
         assert (workspace / "output").is_dir()
         assert list((workspace / "output").iterdir()) == []
         assert not (workspace / "AGENTS.md").exists()
@@ -714,7 +724,7 @@ def test_sokoban_output_is_created_before_model_start(
     monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"] + BACKEND_ARGS)
     assert supervisor.main() == 1
     assert bool(model_started) is not existing_output
-    workspace = next((tmp_path / "supervisor-runs").glob("*/workspace"))
+    workspace = next((tmp_path / "supervisor-runs").glob("*/*/workspace"))
     if existing_output:
         assert (source / "output" / "existing.txt").read_text(encoding="utf-8") == "keep"
         assert (workspace / "output" / "existing.txt").read_text(encoding="utf-8") == "keep"
@@ -737,7 +747,7 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     seen = {}
 
     class Guard:
-        def __init__(self, name: str, token: str, model_path: str, mode: str, game: SokobanAuthority, *, backend_token: str, image: str) -> None:
+        def __init__(self, name: str, token: str, model_path: str, mode: str, game: SokobanAuthority, *, backend_token: str, image: str, backend_kind="llamacpp") -> None:
             assert image == pinned_image
             self.network = "network"
             seen["game"] = game
@@ -767,14 +777,22 @@ def test_sokoban_launcher_uses_same_authority_for_gateway_and_supervisor(
     monkeypatch.setattr(supervisor, "supervise", fake_supervise)
     monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban"] + BACKEND_ARGS)
     assert supervisor.main() == 1
-    record = next((tmp_path / "supervisor-runs").glob("*/game.json"))
+    record = next((tmp_path / "supervisor-runs").glob("*/*/game.json"))
     assert len(json.loads(record.read_text(encoding="utf-8"))["actions"]) == 24
 
 
-def test_selected_puzzle_prompt_and_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str) -> None:
+@pytest.mark.parametrize("variant", ["standard", "concise"])
+@pytest.mark.parametrize("task_flag", [[], ["--task", "sokoban"]])
+def test_selected_puzzle_prompt_and_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str, variant: str, task_flag: list[str]) -> None:
     import shutil
     source = tmp_path / "sokoban_workspace"
     shutil.copytree(ROOT / "sokoban_workspace", source)
+    prompt_file = ROOT / "src" / "sokoban" / "concise.prompt"
+    if variant == "concise":
+        target = tmp_path / "src" / "sokoban"
+        target.mkdir(parents=True)
+        shutil.copy(prompt_file, target / "concise.prompt")
+    template = (source / "task.prompt").read_text(encoding="utf-8") if variant == "standard" else prompt_file.read_text(encoding="utf-8")
     monkeypatch.setattr(supervisor, "ROOT", tmp_path)
 
     class Guard:
@@ -786,6 +804,8 @@ def test_selected_puzzle_prompt_and_record(tmp_path: Path, monkeypatch: pytest.M
             return True
 
     def fake_supervise(command, prompt, limit_seconds, run_dir, *, game, **kwargs):
+        assert prompt == supervisor.PROMPT + template.replace("{ACTION_LIMIT}", "8")
+        assert json.loads((run_dir / "model.json").read_text(encoding="utf-8"))["sokoban_prompt"] == variant
         assert "You have 8 actions" in prompt
         assert "action 8" in prompt and "{ACTION_LIMIT}" not in prompt
         assert "You have 8 actions" in (run_dir / "workspace" / "task.prompt").read_text(encoding="utf-8")
@@ -797,5 +817,125 @@ def test_selected_puzzle_prompt_and_record(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
     monkeypatch.setattr(supervisor, "supervise", fake_supervise)
     monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda _: True)
-    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban", "--puzzle", "one-push"] + BACKEND_ARGS)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--puzzle", "one-push", "--sokoban-prompt", variant] + task_flag + BACKEND_ARGS)
     assert supervisor.main() == 0
+
+
+def test_concise_prompt_changes_only_action_instructions() -> None:
+    standard = (ROOT / "sokoban_workspace" / "task.prompt").read_text(encoding="utf-8")
+    concise = (ROOT / "src" / "sokoban" / "concise.prompt").read_text(encoding="utf-8")
+    header = "## Output requirements for each action\n\n"
+    ending = "\n\nIf the game is solved before action {ACTION_LIMIT},"
+    assert standard.split(header)[0] == concise.split(header)[0]
+    assert standard.split(ending)[1] == concise.split(ending)[1]
+    assert "Briefly check the current positions" in concise
+    assert "Do not repeat the full board" in concise
+    assert "Put your detailed reasoning" not in concise
+
+
+def test_invalid_sokoban_prompt_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--sokoban-prompt", "unknown"] + BACKEND_ARGS)
+    with pytest.raises(SystemExit) as error:
+        supervisor.main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("content", [None, "   "])
+def test_missing_or_empty_concise_prompt_stops_before_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None
+) -> None:
+    def prepare_workspace(source: Path, run: Path, **kwargs: object) -> Path:
+        workspace = run / "workspace"
+        workspace.mkdir()
+        return workspace
+
+    if content is not None:
+        path = tmp_path / "src" / "sokoban" / "concise.prompt"
+        path.parent.mkdir(parents=True)
+        path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setattr(supervisor.container_run, "prepare_workspace", prepare_workspace)
+    monkeypatch.setattr(supervisor.llamacpp_model.LlamaServer, "start", lambda self: pytest.fail("Backend must not start"))
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--task", "sokoban", "--sokoban-prompt", "concise"] + BACKEND_ARGS)
+    assert supervisor.main() == 1
+
+
+def test_openrouter_launcher_keeps_key_out_of_agent_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str,
+) -> None:
+    import shutil
+    shutil.copytree(ROOT / "sokoban_workspace", tmp_path / "sokoban_workspace")
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "private-key")
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--backend", "openrouter"])
+    monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda _: True)
+
+    class Guard:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["backend_kind"] == "openrouter"
+            assert kwargs["backend_token"] == ""
+            self.network = "network"
+        def start(self):
+            pass
+        def close(self):
+            return True
+
+    def run(command, prompt, limit_seconds, run_dir, *, game, stop_at_limit, backend):
+        assert run_dir.parent.name == "deepseek"
+        assert "private-key" not in str(command)
+        assert "OPENROUTER_API_KEY" not in str(command)
+        assert backend is None
+        assert stop_at_limit()
+        return {"status": "action_limit"}
+
+    monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
+    monkeypatch.setattr(supervisor, "supervise", run)
+    assert supervisor.main() == 1
+    metadata = json.loads(next((tmp_path / "supervisor-runs").glob("*/*/model.json")).read_text(encoding="utf-8"))
+    assert metadata["backend"] == "OpenRouter"
+    assert metadata["model"] == "deepseek/deepseek-v4.1-flash-1017"
+    assert "private-key" not in str(metadata)
+
+
+def test_huggingface_token_reads_dotenv_and_prefers_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    file = tmp_path / ".env"
+    file.write_text("OTHER_KEY=ignored\nHF_TOKEN=\"file-token\" # comment\n", encoding="utf-8")
+    assert supervisor.huggingface_token(file) == "file-token"
+    monkeypatch.setenv("HF_TOKEN", "environment-token")
+    assert supervisor.huggingface_token(file) == "environment-token"
+    monkeypatch.delenv("HF_TOKEN")
+    file.write_text("HF_TOKEN=one\nHF_TOKEN=two\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="HF_TOKEN"):
+        supervisor.huggingface_token(file)
+    file.write_bytes(b"\xff")
+    with pytest.raises(ValueError, match="Cannot read .env"):
+        supervisor.huggingface_token(file)
+
+
+def test_huggingface_launcher_uses_dotenv_without_exposing_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned_image: str) -> None:
+    import shutil
+    shutil.copytree(ROOT / "sokoban_workspace", tmp_path / "sokoban_workspace")
+    (tmp_path / ".env").write_text("HF_TOKEN=private-key\n", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(supervisor, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["supervisor.py", "--backend", "huggingface"])
+    monkeypatch.setattr(supervisor.container_run, "cleanup_container", lambda _: True)
+    class Guard:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["backend_kind"] == "huggingface"
+            self.network = "network"
+        def start(self): pass
+        def close(self): return True
+    def run(command, prompt, limit_seconds, run_dir, *, game, stop_at_limit, backend):
+        assert run_dir.parent.name == "deepseek-huggingface"
+        assert "private-key" not in str(command) and "HF_TOKEN" not in str(command)
+        assert backend is None and stop_at_limit()
+        return {"status": "action_limit"}
+    monkeypatch.setattr(supervisor.network_guard, "GatewaySession", Guard)
+    monkeypatch.setattr(supervisor, "supervise", run)
+    assert supervisor.main() == 1
+    metadata = json.loads(next((tmp_path / "supervisor-runs" / "deepseek-huggingface").glob("*/model.json")).read_text(encoding="utf-8"))
+    assert metadata["backend"] == "Hugging Face"
+    assert metadata["model"] == "deepseek-ai/DeepSeek-V4.1-Flash"
+    assert "private-key" not in json.dumps(metadata)

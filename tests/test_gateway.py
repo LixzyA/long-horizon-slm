@@ -328,3 +328,136 @@ def test_backend_readiness_ignores_inherited_proxies(monkeypatch: pytest.MonkeyP
     finally:
         upstream.shutdown()
         upstream.server_close()
+
+
+def test_openrouter_request_is_fixed_to_requested_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKEND_KIND", "openrouter")
+    body = {"model": gateway.OPENROUTER_MODEL, "reasoning": {"effort": "high"}, "messages": []}
+    assert gateway.valid_model_request(body, "high")
+    assert not gateway.valid_model_request({**body, "model": "other"}, "high")
+    assert not gateway.valid_model_request({**body, "reasoning": {"effort": "none"}}, "high")
+    assert not gateway.valid_model_request({**body, "provider": {"order": ["other"]}}, "high")
+    assert gateway.prepare_model_request(body, "high") == {**body, "max_tokens": 16384}
+    assert "samplers" not in gateway.prepare_model_request(body, "high")
+
+
+def test_openrouter_forwards_with_private_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = []
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            seen.append((self.headers.get("Authorization"), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"data: done\n\n")
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    monkeypatch.setenv("BACKEND_KIND", "openrouter")
+    monkeypatch.setenv("GATEWAY_TOKEN", "agent-token")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "private-key")
+    monkeypatch.setenv("THINKING_MODE", "high")
+    monkeypatch.setattr(gateway, "OPENROUTER_ENDPOINT", f"https://127.0.0.1:{upstream.server_port}/v1/chat/completions")
+    monkeypatch.setattr(gateway.http.client, "HTTPSConnection", gateway.http.client.HTTPConnection)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), gateway.ModelHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    body = {"model": gateway.OPENROUTER_MODEL, "reasoning": {"effort": "high"}, "messages": []}
+    request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", data=json.dumps(body).encode(), headers={"Authorization": "Bearer agent-token"})
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.read() == b"data: done\n\n"
+        assert seen == [("Bearer private-key", {**body, "max_tokens": 16384})]
+    finally:
+        server.shutdown()
+        server.server_close()
+        upstream.shutdown()
+        upstream.server_close()
+
+
+@pytest.mark.parametrize("mode,effort", [("high", "high"), ("off", None)])
+def test_huggingface_request_uses_only_the_selected_model(monkeypatch: pytest.MonkeyPatch, mode: str, effort: str | None) -> None:
+    monkeypatch.setenv("BACKEND_KIND", "huggingface")
+    body = {"model": gateway.HUGGINGFACE_MODEL, "messages": [], "reasoning_effort": effort}
+    assert gateway.valid_model_request(body, mode)
+    assert not gateway.valid_model_request({**body, "model": "other"}, mode)
+    assert not gateway.valid_model_request({**body, "temperature": 0.1}, mode)
+    assert not gateway.valid_model_request({**body, "reasoning_effort": "none" if mode == "high" else "high"}, mode)
+    result = gateway.prepare_model_request(body, mode)
+    assert result["model"] == gateway.HUGGINGFACE_MODEL
+    assert result["reasoning_effort"] == ("high" if mode == "high" else "none")
+    assert "samplers" not in result
+
+
+def test_huggingface_forwards_to_router_with_private_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = []
+    class Upstream(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            seen.append((self.path, self.headers.get("Authorization"), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"data: done\n\n")
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    monkeypatch.setenv("BACKEND_KIND", "huggingface")
+    monkeypatch.setenv("GATEWAY_TOKEN", "agent-token")
+    monkeypatch.setenv("HF_TOKEN", "private-key")
+    monkeypatch.setenv("THINKING_MODE", "high")
+    monkeypatch.setattr(gateway, "HUGGINGFACE_ENDPOINT", f"https://127.0.0.1:{upstream.server_port}/v1/chat/completions")
+    monkeypatch.setattr(gateway.http.client, "HTTPSConnection", gateway.http.client.HTTPConnection)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), gateway.ModelHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    body = {"model": gateway.HUGGINGFACE_MODEL, "reasoning_effort": "high", "messages": []}
+    request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", data=json.dumps(body).encode(), headers={"Authorization": "Bearer agent-token"})
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.read() == b"data: done\n\n"
+        assert seen == [("/v1/chat/completions", "Bearer private-key", {**body, "max_tokens": 16384})]
+    finally:
+        server.shutdown()
+        server.server_close()
+        upstream.shutdown()
+        upstream.server_close()
+
+
+def test_huggingface_readiness_checks_token_without_inherited_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BACKEND_KIND", "huggingface")
+    monkeypatch.setenv("HF_TOKEN", "private-key")
+    seen = []
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    class Opener:
+        def open(self, request, timeout):
+            seen.append((request.full_url, request.get_header("Authorization"), timeout))
+            return Response()
+    def build_opener(handler):
+        assert isinstance(handler, urllib.request.ProxyHandler)
+        assert handler.proxies == {}
+        return Opener()
+    monkeypatch.setattr(gateway.urllib.request, "build_opener", build_opener)
+    assert gateway.model_ready()
+    assert seen == [("https://huggingface.co/api/whoami-v2", "Bearer private-key", 15)]
+
+
+@pytest.mark.parametrize(
+    "kind,model,reasoning",
+    [("openrouter", gateway.OPENROUTER_MODEL, {"reasoning": {"effort": "high"}}),
+     ("huggingface", gateway.HUGGINGFACE_MODEL, {"reasoning_effort": "high"})],
+)
+def test_hosted_requests_apply_output_limit_when_omitted(
+    monkeypatch: pytest.MonkeyPatch, kind: str, model: str, reasoning: dict,
+) -> None:
+    monkeypatch.setenv("BACKEND_KIND", kind)
+    body = {"model": model, "messages": [], **reasoning}
+    assert gateway.valid_model_request(body, "high")
+    assert gateway.prepare_model_request(body, "high")["max_tokens"] == 16384
+    assert "max_tokens" not in body
+    assert gateway.prepare_model_request({**body, "max_tokens": 7}, "high")["max_tokens"] == 7
+    for value in (0, 16385, True, None):
+        assert not gateway.valid_model_request({**body, "max_tokens": value}, "high")

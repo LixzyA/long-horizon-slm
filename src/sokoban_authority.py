@@ -7,12 +7,22 @@ import threading
 from pathlib import Path
 
 GAME_PATH = Path(__file__).resolve().parent.parent / "sokoban_workspace" / "src" / "sokoban.py"
-PUZZLES_PATH = Path(__file__).resolve().parent / "sokoban" / "puzzles.json"
+PUZZLES_DIR = Path(__file__).resolve().parent / "sokoban"
+
+
+def load_puzzles() -> dict[str, dict]:
+    puzzles = {}
+    for split in ("train", "validation", "test"):
+        records = json.loads((PUZZLES_DIR / f"puzzles-{split}.json").read_text(encoding="utf-8"))
+        for puzzle_id, puzzle in records.items():
+            if puzzle_id in puzzles or puzzle.get("split") != split:
+                raise ValueError(f"Duplicate or mislabeled puzzle: {puzzle_id}")
+            puzzles[puzzle_id] = puzzle
+    return puzzles
 
 
 def load_puzzle(puzzle_id: str) -> dict:
-    puzzles = json.loads(PUZZLES_PATH.read_text(encoding="utf-8"))
-    return {"id": puzzle_id, **puzzles[puzzle_id]}
+    return {"id": puzzle_id, **load_puzzles()[puzzle_id]}
 
 
 class SokobanAuthority:

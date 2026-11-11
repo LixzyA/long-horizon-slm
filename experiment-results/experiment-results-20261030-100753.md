@@ -51,10 +51,10 @@ The event log excludes `message_update` and `tool_execution_update` fragments. I
 
 ## Evidence and limits
 
-- [Outcome](../supervisor-runs/20261030-100753-8ce2c174/outcome.json)
-- [Model settings](../supervisor-runs/20261030-100753-8ce2c174/model.json)
-- [Event trace](../supervisor-runs/20261030-100753-8ce2c174/events.jsonl)
-- [Copied assignment](../supervisor-runs/20261030-100753-8ce2c174/workspace/task.prompt)
+- [Outcome](../supervisor-runs/local/20261030-100753-8ce2c174/outcome.json)
+- [Model settings](../supervisor-runs/local/20261030-100753-8ce2c174/model.json)
+- [Event trace](../supervisor-runs/local/20261030-100753-8ce2c174/events.jsonl)
+- [Copied assignment](../supervisor-runs/local/20261030-100753-8ce2c174/workspace/task.prompt)
 - Pi session: `workspace/.pi-sessions/2026-10-30T02-07-56-758Z_01a18a90-5355-7505-a160-ce6b6b33e8b3.jsonl` in the run folder.
 
 The workspace check found no `output` directory. The container is no longer available.

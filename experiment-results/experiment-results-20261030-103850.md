@@ -63,10 +63,10 @@ Each condition has one run. These results do not establish that either condition
 
 ## Evidence and limits
 
-- [Outcome](../supervisor-runs/20261030-103850-af74bd43/outcome.json)
-- [Model settings](../supervisor-runs/20261030-103850-af74bd43/model.json)
-- [Event trace](../supervisor-runs/20261030-103850-af74bd43/events.jsonl)
-- [Copied task](../supervisor-runs/20261030-103850-af74bd43/workspace/task.prompt)
+- [Outcome](../supervisor-runs/local/20261030-103850-af74bd43/outcome.json)
+- [Model settings](../supervisor-runs/local/20261030-103850-af74bd43/model.json)
+- [Event trace](../supervisor-runs/local/20261030-103850-af74bd43/events.jsonl)
+- [Copied task](../supervisor-runs/local/20261030-103850-af74bd43/workspace/task.prompt)
 - [Previous run report](experiment-results-20261030-100753.md)
 
 The event log excludes streamed fragments. It cannot show all intermediate model output.
